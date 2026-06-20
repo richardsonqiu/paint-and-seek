@@ -1,0 +1,17 @@
+{
+  "name": "doodle-guys",
+  "version": "0.1.0",
+  "description": "Doodle Guys — a browser-based, mobile-first multiplayer paint-and-seek party game.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "keywords": ["game", "multiplayer", "party", "hide-and-seek", "websocket"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

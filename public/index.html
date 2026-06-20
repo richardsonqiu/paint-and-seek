@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1b1230" />
+  <title>Doodle Guys</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>" />
+</head>
+<body>
+  <!-- HOME -->
+  <section id="screen-home" class="screen active">
+    <div class="hero">
+      <h1 class="logo">Doodle <span>Guys</span></h1>
+      <p class="tag">Draw yourself invisible.</p>
+    </div>
+    <div class="card">
+      <label class="field">
+        <span>Your name</span>
+        <input id="nameInput" maxlength="12" placeholder="Doodler" autocomplete="off" />
+      </label>
+      <div class="field">
+        <span>Pick an avatar</span>
+        <div id="avatarPicker" class="avatar-picker"></div>
+      </div>
+      <button id="createBtn" class="btn primary big">Create Room</button>
+      <div class="divider"><span>or</span></div>
+      <div class="join-row">
+        <input id="codeInput" maxlength="4" placeholder="CODE" class="code-input" autocapitalize="characters" autocomplete="off" />
+        <button id="joinBtn" class="btn">Join</button>
+      </div>
+      <p id="homeError" class="error"></p>
+    </div>
+    <p class="footnote">A paint-and-seek party game · inspired by Meccha Chameleon</p>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="screen-lobby" class="screen">
+    <header class="bar">
+      <button id="leaveLobbyBtn" class="btn ghost">← Leave</button>
+      <div class="room-code">
+        <span class="muted">Room</span>
+        <strong id="lobbyCode">----</strong>
+      </div>
+      <button id="shareBtn" class="btn ghost">Share</button>
+    </header>
+    <div class="card">
+      <h2>Players <span id="playerCount" class="muted"></span></h2>
+      <ul id="playerList" class="player-list"></ul>
+    </div>
+    <div id="hostSettings" class="card hidden">
+      <h2>Settings</h2>
+      <label class="field">
+        <span>Map</span>
+        <select id="mapSelect"></select>
+      </label>
+      <label class="field">
+        <span>Mode</span>
+        <select id="modeSelect">
+          <option value="classic">Classic — find all hiders</option>
+          <option value="infection">Infection — caught hiders join seekers</option>
+        </select>
+      </label>
+      <div class="settings-grid">
+        <label class="field"><span>Prep (s)</span><input id="prepInput" type="number" min="20" max="120" /></label>
+        <label class="field"><span>Hunt (s)</span><input id="huntInput" type="number" min="30" max="240" /></label>
+        <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="10" /></label>
+      </div>
+    </div>
+    <div class="card hidden" id="guestWait">
+      <p class="muted">Waiting for the host to start…</p>
+    </div>
+    <button id="startBtn" class="btn primary big hidden">Start Game</button>
+    <p id="lobbyHint" class="footnote"></p>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen">
+    <header class="bar slim">
+      <div class="hud-left">
+        <span id="phaseLabel" class="pill">PREP</span>
+        <span id="roleLabel" class="pill role"></span>
+      </div>
+      <div id="timer" class="timer">--</div>
+      <div class="hud-right">
+        <span id="remainLabel" class="pill"></span>
+      </div>
+    </header>
+
+    <div class="stage-wrap">
+      <canvas id="stage"></canvas>
+      <div id="waitOverlay" class="overlay hidden">
+        <div class="overlay-inner">
+          <div class="big-emoji">🔍</div>
+          <h2 id="waitTitle">Get ready…</h2>
+          <p id="waitText" class="muted"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hider toolbar -->
+    <div id="hiderTools" class="toolbar hidden">
+      <div class="tool-row">
+        <button class="tool" data-tool="move">✋<small>Move</small></button>
+        <button class="tool active" data-tool="eyedrop">💧<small>Eyedrop</small></button>
+        <label class="tool color-tool">
+          🎨<small>Color</small>
+          <input id="colorInput" type="color" value="#ffffff" />
+        </label>
+        <button id="fillAllBtn" class="tool">🪣<small>Fill All</small></button>
+      </div>
+      <div class="tool-row">
+        <div class="seg-pick">
+          <button class="seg active" data-seg="head">Head</button>
+          <button class="seg" data-seg="torso">Body</button>
+          <button class="seg" data-seg="legs">Legs</button>
+        </div>
+        <div class="pose-pick">
+          <button class="pose active" data-pose="standing" title="Standing">🧍</button>
+          <button class="pose" data-pose="crouching" title="Crouching">🧎</button>
+          <button class="pose" data-pose="flat" title="Lying flat">🛌</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Seeker toolbar -->
+    <div id="seekerTools" class="toolbar hidden">
+      <p class="seeker-hint">Tap a doodler you think is hiding to tag them. Hunt shapes, not just colors.</p>
+    </div>
+
+    <!-- Emote bar -->
+    <div id="emoteBar" class="emote-bar hidden">
+      <button class="emote" data-emoji="😂">😂</button>
+      <button class="emote" data-emoji="😮">😮</button>
+      <button class="emote" data-emoji="😎">😎</button>
+      <button class="emote" data-emoji="👀">👀</button>
+      <button class="emote" data-emoji="🔥">🔥</button>
+    </div>
+
+    <!-- Round over -->
+    <div id="scoreOverlay" class="overlay hidden">
+      <div class="overlay-inner card">
+        <h2 id="scoreTitle">Round over</h2>
+        <ul id="scoreList" class="player-list"></ul>
+        <p id="nextHint" class="muted"></p>
+      </div>
+    </div>
+
+    <div id="emoteFloat" class="emote-float"></div>
+    <div id="toast" class="toast hidden"></div>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/game.js"></script>
+</body>
+</html>
