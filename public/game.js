@@ -126,11 +126,23 @@ function initThree() {
   raycaster = new THREE.Raycaster();
   clock = new THREE.Clock();
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x404060, 0.9);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const hemi = new THREE.HemisphereLight(0xfff4e0, 0x3a2a60, 1.1);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  const dir = new THREE.DirectionalLight(0xfffaf0, 1.3);
   dir.position.set(8, 20, 6);
+  dir.castShadow = true;
+  dir.shadow.mapSize.set(1024, 1024);
+  dir.shadow.camera.near = 0.5; dir.shadow.camera.far = 80;
+  dir.shadow.camera.left = dir.shadow.camera.bottom = -22;
+  dir.shadow.camera.right = dir.shadow.camera.top = 22;
+  dir.shadow.bias = -0.001;
   scene.add(dir);
+  const fill = new THREE.PointLight(0xff9952, 0.55, 35);
+  fill.position.set(-7, 5, -7);
+  scene.add(fill);
 
   window.addEventListener('resize', resize);
   threeReady = true;
@@ -146,7 +158,12 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 
-function mat(color) { return new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.85, metalness: 0.0 }); }
+function mat(color, roughness = 0.85, metalness = 0.0, emissive = null, emissiveIntensity = 0.5) {
+  const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness, metalness });
+  if (emissive) { m.emissive.set(emissive); m.emissiveIntensity = emissiveIntensity; }
+  return m;
+}
+function segMat(color) { return new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.75, metalness: 0.0 }); }
 
 function buildScene(mapId) {
   if (builtMapId === mapId && roomGroup) return;
@@ -157,16 +174,18 @@ function buildScene(mapId) {
   const { x: sx, z: sz, h: sh } = map.size;
 
   // floor
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.floorColor));
-  floor.position.y = -0.1; g.add(floor); envMeshes.push(floor);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.floorColor, 0.9));
+  floor.position.y = -0.1; floor.receiveShadow = true;
+  g.add(floor); envMeshes.push(floor);
   // ceiling
-  const ceil = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.ceilColor));
-  ceil.position.y = sh; g.add(ceil); envMeshes.push(ceil);
-  // 4 walls (faces inward; BackSide so we see them from inside)
-  const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(map.wallColor), roughness: 0.9, side: THREE.DoubleSide });
+  const ceil = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.ceilColor, 0.95));
+  ceil.position.y = sh; g.add(ceil);
+  // 4 walls
+  const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(map.wallColor), roughness: 0.92, side: THREE.DoubleSide });
   const mkWall = (w, h, d, x, y, z) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat.clone());
-    m.position.set(x, y, z); g.add(m); envMeshes.push(m);
+    m.position.set(x, y, z); m.receiveShadow = true;
+    g.add(m); envMeshes.push(m);
   };
   mkWall(sx, sh, 0.2, 0, sh / 2, -sz / 2);
   mkWall(sx, sh, 0.2, 0, sh / 2, sz / 2);
@@ -175,8 +194,12 @@ function buildScene(mapId) {
 
   // furniture boxes
   for (const b of map.boxes) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]), mat(b.color));
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]),
+      mat(b.color, b.roughness, b.metalness, b.emissive, b.emissiveIntensity)
+    );
     m.position.set(b.pos[0], b.pos[1], b.pos[2]);
+    m.castShadow = true; m.receiveShadow = true;
     g.add(m); envMeshes.push(m);
   }
   scene.add(g);
@@ -185,29 +208,62 @@ function buildScene(mapId) {
 
 function buildCharacter(seg) {
   const grp = new THREE.Group();
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 18, 18), mat(seg.head)); head.position.y = 1.5;
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.8, 0.36), mat(seg.torso)); torso.position.y = 0.95;
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.7, 0.34), mat(seg.legs)); legs.position.y = 0.35;
-  grp.add(head, torso, legs);
-  grp.userData.parts = { head, torso, legs };
+  const PI = Math.PI;
+  const add = (geo, color, x, y, z, rx, rz) => {
+    const m = new THREE.Mesh(geo, segMat(color));
+    m.position.set(x, y, z);
+    if (rx) m.rotation.x = rx;
+    if (rz) m.rotation.z = rz;
+    m.castShadow = true; m.receiveShadow = true;
+    grp.add(m); return m;
+  };
+
+  // Head + neck
+  const head  = add(new THREE.SphereGeometry(0.3, 20, 16),            seg.head,  0,     1.60, 0);
+  const neck  = add(new THREE.CylinderGeometry(0.09, 0.11, 0.18, 8),  seg.head,  0,     1.32, 0);
+  // Torso (CapsuleGeometry = cylinder with rounded caps — much less blocky)
+  const torso = add(new THREE.CapsuleGeometry(0.23, 0.48, 6, 12),     seg.torso, 0,     1.00, 0);
+  // Hip bridge
+  const hip   = add(new THREE.CapsuleGeometry(0.21, 0.14, 4, 10),     seg.legs,  0,     0.61, 0);
+  // Upper arms (torso colour)
+  const luArm = add(new THREE.CapsuleGeometry(0.082, 0.28, 4, 8),     seg.torso, -0.40, 1.08, 0, 0,  PI / 7);
+  const ruArm = add(new THREE.CapsuleGeometry(0.082, 0.28, 4, 8),     seg.torso,  0.40, 1.08, 0, 0, -PI / 7);
+  // Forearms (skin = head colour)
+  const llArm = add(new THREE.CapsuleGeometry(0.067, 0.25, 4, 8),     seg.head,  -0.50, 0.73, 0, 0,  PI / 11);
+  const rlArm = add(new THREE.CapsuleGeometry(0.067, 0.25, 4, 8),     seg.head,   0.50, 0.73, 0, 0, -PI / 11);
+  // Legs (split into two capsules)
+  const lLeg  = add(new THREE.CapsuleGeometry(0.10, 0.38, 4, 8),      seg.legs,  -0.12, 0.27, 0);
+  const rLeg  = add(new THREE.CapsuleGeometry(0.10, 0.38, 4, 8),      seg.legs,   0.12, 0.27, 0);
+  // Feet
+  const lFt   = add(new THREE.BoxGeometry(0.14, 0.09, 0.26),          seg.legs,  -0.12, 0.03, 0.04);
+  const rFt   = add(new THREE.BoxGeometry(0.14, 0.09, 0.26),          seg.legs,   0.12, 0.03, 0.04);
+
+  grp.userData.segMeshes = {
+    head:  [head, neck, llArm, rlArm],
+    torso: [torso, luArm, ruArm],
+    legs:  [hip, lLeg, rLeg, lFt, rFt],
+  };
   return grp;
 }
 function setColors(g, seg) {
-  g.userData.parts.head.material.color.set(seg.head);
-  g.userData.parts.torso.material.color.set(seg.torso);
-  g.userData.parts.legs.material.color.set(seg.legs);
+  const sm = g.userData.segMeshes;
+  for (const m of sm.head)  m.material.color.set(seg.head);
+  for (const m of sm.torso) m.material.color.set(seg.torso);
+  for (const m of sm.legs)  m.material.color.set(seg.legs);
 }
 function setPose(g, pose) {
   g.scale.set(1, 1, 1); g.rotation.x = 0; g.position.y = 0;
   if (pose === 'crouching') g.scale.set(1.05, 0.6, 1.05);
-  else if (pose === 'flat') { g.rotation.x = Math.PI / 2; g.position.y = 0.35; }
+  else if (pose === 'flat') { g.rotation.x = Math.PI / 2; g.position.y = 0.30; }
 }
 function setFound(g, found) {
-  for (const p of Object.values(g.userData.parts)) {
-    p.material.emissive = new THREE.Color(found ? 0xff2d6b : 0x000000);
-    p.material.emissiveIntensity = found ? 0.7 : 0;
-    p.material.transparent = !!found;
-    p.material.opacity = found ? 0.5 : 1;
+  for (const meshes of Object.values(g.userData.segMeshes)) {
+    for (const m of meshes) {
+      m.material.emissive.set(found ? 0xff2d6b : 0x000000);
+      m.material.emissiveIntensity = found ? 0.7 : 0;
+      m.material.transparent = !!found;
+      m.material.opacity = found ? 0.5 : 1;
+    }
   }
 }
 
