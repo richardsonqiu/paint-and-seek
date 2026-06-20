@@ -1,0 +1,13 @@
+# Render Blueprint — deploys Doodle Guys as a free web service.
+# Render → New → Blueprint → connect this repo → Apply. That's it.
+services:
+  - type: web
+    name: doodle-guys
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
