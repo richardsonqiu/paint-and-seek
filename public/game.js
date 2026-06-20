@@ -7,6 +7,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MAPS, POSES } from '/shared/maps.js';
 
 const AVATARS = ['🦎', '🐙', '🐸', '🦊', '🐼', '🐯', '🐧', '🦄', '🐳', '👾', '🤖', '👻'];
@@ -111,6 +112,7 @@ function renderLobby() {
 let renderer, scene, camera, raycaster, clock, composer;
 let roomGroup = null, builtMapId = null;
 let envMeshes = [];                 // eyedropper raycast targets
+let spinProps = [];                 // slowly-rotating display models
 const charGroups = new Map();       // hider id -> Group (hunt phase)
 let myChar = null;                  // hider's own Group (prep)
 let threeReady = false;
@@ -193,6 +195,7 @@ function buildScene(mapId) {
   if (builtMapId === mapId && roomGroup) return;
   if (roomGroup) { scene.remove(roomGroup); roomGroup = null; }
   envMeshes = [];
+  spinProps = [];
   const map = MAPS[mapId] || MAPS.living_room;
   const g = new THREE.Group();
   const { x: sx, z: sz, h: sh } = map.size;
@@ -229,9 +232,52 @@ function buildScene(mapId) {
     m.position.set(b.pos[0], b.pos[1], b.pos[2]);
     m.castShadow = true; m.receiveShadow = true;
     g.add(m); envMeshes.push(m);
+    // Optional authored GLB prop — loads over the box and swaps it out on
+    // success. If the fetch fails (offline, CORS, slow phone) the box stays,
+    // so the game never regresses below the all-primitives version.
+    if (b.model) loadProp(b, m, g);
   }
   scene.add(g);
   roomGroup = g; builtMapId = mapId;
+}
+
+const gltfLoader = new GLTFLoader();
+const modelCache = new Map();        // url -> cloned-ready gltf.scene template
+
+function placeProp(template, b, fallbackMesh, group) {
+  if (roomGroup !== group) return;   // map was rebuilt mid-load; drop it
+  const m = b.model;
+  const obj = template.clone(true);
+  // Recenter the model on its own origin, then drop it where the box was.
+  const box3 = new THREE.Box3().setFromObject(obj);
+  const center = box3.getCenter(new THREE.Vector3());
+  obj.position.sub(center);
+  const holder = new THREE.Group();
+  holder.add(obj);
+  holder.position.set(b.pos[0], m.y != null ? m.y : b.pos[1], b.pos[2]);
+  holder.scale.setScalar(m.scale || 1);
+  if (m.yaw) holder.rotation.y = m.yaw;
+  obj.traverse((o) => {
+    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; envMeshes.push(o); }
+  });
+  if (m.spin) { holder.userData.spin = m.spin; spinProps.push(holder); }
+  group.add(holder);
+  // Retire the placeholder box.
+  group.remove(fallbackMesh);
+  const i = envMeshes.indexOf(fallbackMesh);
+  if (i >= 0) envMeshes.splice(i, 1);
+}
+
+function loadProp(b, fallbackMesh, group) {
+  const url = b.model.url;
+  const cached = modelCache.get(url);
+  if (cached) { placeProp(cached, b, fallbackMesh, group); return; }
+  gltfLoader.load(
+    url,
+    (gltf) => { modelCache.set(url, gltf.scene); placeProp(gltf.scene, b, fallbackMesh, group); },
+    undefined,
+    () => { /* keep the fallback box; non-fatal */ }
+  );
 }
 
 function buildCharacter(seg) {
@@ -397,6 +443,7 @@ function animate() {
   if (!threeReady || !snap || snap.phase === 'lobby') return;
   const dt = Math.min(clock.getDelta(), 0.05);
   applyMovement(dt);
+  for (const p of spinProps) p.rotation.y += p.userData.spin * dt;
   updateCamera();
   if (composer) composer.render(); else renderer.render(scene, camera);
 }

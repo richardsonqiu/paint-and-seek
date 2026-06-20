@@ -94,7 +94,11 @@ export const MAPS = {
       // Sculpture + plinth
       { label: 'plinth',    pos: [-9, 1.00, -9],      size: [1.8, 2.0, 1.8], color: '#9b9486', roughness: 0.78 },
       { label: 'plinth-top',pos: [-9, 2.08, -9],      size: [2.0, 0.16,2.0], color: '#aeaaa0', roughness: 0.72 },
-      { label: 'sculpture', pos: [-9, 3.40, -9],      size: [1.4, 2.8, 1.4], color: '#d8b24a', roughness: 0.55, metalness: 0.2 },
+      // Real authored PBR model — a textured, normal-mapped exhibit piece
+      // that reflects the environment map. Falls back to the gold box if the
+      // GLB can't be fetched. Hosted on the same CDN that serves three.js.
+      { label: 'sculpture', pos: [-9, 3.40, -9],      size: [1.4, 2.8, 1.4], color: '#d8b24a', roughness: 0.55, metalness: 0.2,
+        model: { url: 'https://unpkg.com/three@0.160.0/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', scale: 1.05, y: 3.5, yaw: 0.5, spin: 0.25 } },
       // Second sculpture on pedestal
       { label: 'pedestal',  pos: [ 9, 0.85,  9],      size: [1.6, 1.7, 1.6], color: '#ccc4b4', roughness: 0.75 },
       { label: 'sculpt2',   pos: [ 9, 2.55,  9],      size: [1.0, 1.8, 1.0], color: '#e8e0d4', roughness: 0.65, metalness: 0.1 },
