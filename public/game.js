@@ -2,6 +2,11 @@
 // Loads Three from a CDN via the importmap in index.html (the player's
 // browser fetches it). Home/lobby are plain DOM; the game is a WebGL scene.
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MAPS, POSES } from '/shared/maps.js';
 
 const AVATARS = ['🦎', '🐙', '🐸', '🦊', '🐼', '🐯', '🐧', '🦄', '🐳', '👾', '🤖', '👻'];
@@ -103,7 +108,7 @@ function renderLobby() {
 // ======================================================================
 //  THREE.JS SCENE
 // ======================================================================
-let renderer, scene, camera, raycaster, clock;
+let renderer, scene, camera, raycaster, clock, composer;
 let roomGroup = null, builtMapId = null;
 let envMeshes = [];                 // eyedropper raycast targets
 const charGroups = new Map();       // hider id -> Group (hunt phase)
@@ -120,29 +125,47 @@ function initThree() {
   const canvas = $('stage');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Filmic tone mapping + correct color space — the single biggest jump
+  // away from the flat "plastic primitives" look toward a lit game frame.
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
   scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x0a0612, 20, 60);
+  scene.fog = new THREE.Fog(0x0a0612, 26, 70);
   camera = new THREE.PerspectiveCamera(70, 1, 0.1, 200);
   raycaster = new THREE.Raycaster();
   clock = new THREE.Clock();
 
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Image-based lighting from a procedural studio room (no HDR file to
+  // host). Gives soft ambient + real reflections on glossy surfaces.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-  const hemi = new THREE.HemisphereLight(0xfff4e0, 0x3a2a60, 1.1);
+  const hemi = new THREE.HemisphereLight(0xfff4e0, 0x3a2a60, 0.6);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xfffaf0, 1.3);
-  dir.position.set(8, 20, 6);
+  const dir = new THREE.DirectionalLight(0xfffaf0, 2.2);
+  dir.position.set(10, 22, 8);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
-  dir.shadow.camera.near = 0.5; dir.shadow.camera.far = 80;
-  dir.shadow.camera.left = dir.shadow.camera.bottom = -22;
-  dir.shadow.camera.right = dir.shadow.camera.top = 22;
-  dir.shadow.bias = -0.001;
+  dir.shadow.mapSize.set(2048, 2048);
+  dir.shadow.camera.near = 0.5; dir.shadow.camera.far = 90;
+  dir.shadow.camera.left = dir.shadow.camera.bottom = -24;
+  dir.shadow.camera.right = dir.shadow.camera.top = 24;
+  dir.shadow.bias = -0.0008;
+  dir.shadow.normalBias = 0.02;
   scene.add(dir);
-  const fill = new THREE.PointLight(0xff9952, 0.55, 35);
+  const fill = new THREE.PointLight(0xff9952, 18, 40, 2);
   fill.position.set(-7, 5, -7);
   scene.add(fill);
+
+  // Post-processing: bloom so emissive props (TV, lamp shade) glow.
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.7, 0.85);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
 
   window.addEventListener('resize', resize);
   threeReady = true;
@@ -154,6 +177,7 @@ function resize() {
   const w = $('stage').clientWidth || window.innerWidth;
   const h = $('stage').clientHeight || window.innerHeight;
   renderer.setSize(w, h, false);
+  if (composer) composer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -173,8 +197,12 @@ function buildScene(mapId) {
   const g = new THREE.Group();
   const { x: sx, z: sz, h: sh } = map.size;
 
-  // floor
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.floorColor, 0.9));
+  // floor — low roughness so it picks up the environment map as a soft
+  // reflection (the "wet"/polished look in the reference), mobile-cheap.
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(sx, 0.2, sz),
+    mat(map.floorColor, 0.28, 0.0)
+  );
   floor.position.y = -0.1; floor.receiveShadow = true;
   g.add(floor); envMeshes.push(floor);
   // ceiling
@@ -370,7 +398,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   applyMovement(dt);
   updateCamera();
-  renderer.render(scene, camera);
+  if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
 // ---- Input: joystick ----------------------------------------------------
