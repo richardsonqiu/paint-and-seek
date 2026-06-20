@@ -1,0 +1,28 @@
+# Fly.io config for Doodle Guys.
+# First time:  fly launch --copy-config --no-deploy   (reuses this file)
+# Then:        fly deploy
+#
+# `fly launch` will pick a globally-unique app name and a region for you;
+# adjust `app` and `primary_region` below if you want to set them yourself.
+
+app = "doodle-guys"
+primary_region = "sin"   # Singapore. Change to one near your players (e.g. iad, lhr, syd).
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Keep one machine warm so real-time play has no cold-start lag.
+  # Set min_machines_running = 0 to save cost (adds a wake-up delay when idle).
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
