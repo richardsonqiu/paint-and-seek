@@ -2,7 +2,7 @@
 
 **Draw yourself invisible.**
 
-A browser-based, mobile-first multiplayer *paint-and-seek* party game — inspired by Meccha Chameleon. Hiders start as blank white doodlers and **paint themselves to blend into the room**, pick a pose, and freeze. Seekers scan the scene and tap whoever looks out of place before the timer runs out.
+A browser-based, mobile-first **3D** multiplayer *paint-and-seek* party game — inspired by Meccha Chameleon. Hiders start as blank white doodlers and **paint themselves to blend into the room**, pick a pose, and freeze. Seekers walk the room in **first-person** and tap whoever looks out of place before the timer runs out.
 
 No download, no install — just open a link or share a 4-letter room code. Plays great on a phone.
 
@@ -24,8 +24,8 @@ Open **http://localhost:3000** on your phone and computer (same network), create
 A round flows through three phases:
 
 1. **Lobby** — players join, host picks the map/mode/timers.
-2. **Prep** — *hiders* roam the map, use the 💧 **eyedropper** to sample colors off walls/props, paint each body segment (head / body / legs), pick a **pose** (standing 🧍 / crouching 🧎 / flat 🛌), and freeze. *Seekers* wait and memorise the room.
-3. **Hunt** — *seekers* tap any doodler they think is hiding to **tag** them. *Hiders* hold still and pray.
+2. **Prep** — *hiders* roam the 3D room (joystick to move, drag to look), **tap a surface to eyedrop its real color** onto a body segment (head / body / legs), pick a **pose** (standing 🧍 / crouching 🧎 / flat 🛌), and freeze. *Seekers* wait and memorise the room.
+3. **Hunt** — *seekers* walk in first-person (joystick + drag to look) and tap any doodler they think is hiding to **tag** them. *Hiders* hold still and pray.
 
 **Scoring:** hiders earn points for surviving the round; seekers earn points per tag (plus a time bonus for early finds) and a bonus for clearing everyone. Roles reshuffle each round.
 
@@ -41,8 +41,8 @@ Living Room · Aquarium · Art Gallery
 | Layer | Choice |
 | --- | --- |
 | Server | Node.js + Express + **Socket.io** (server-authoritative state machine) |
-| Client | Vanilla JS + HTML5 **Canvas**, no build step |
-| Shared | `shared/maps.js` map definitions imported by both client & server |
+| Client | **Three.js / WebGL** + vanilla JS, no build step (Three loads from CDN via importmap) |
+| Shared | `shared/maps.js` 3D map definitions imported by both client & server |
 
 ```
 server/

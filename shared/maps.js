@@ -1,69 +1,72 @@
-// Shared map definitions for Doodle Guys.
-// A map is a logical 1000x1000 space. Surfaces are colored shapes that
-// hiders can eyedrop colors from and hide against. The client scales the
-// 1000x1000 space to fit the device screen.
+// Shared 3D map definitions for Doodle Guys.
+// Coordinate system: a room centered at the origin. Floor is the y=0 plane,
+// +y is up. Units are roughly metres (a character is ~1.7 tall).
+// Boxes are axis-aligned; `pos` is the box CENTRE, `size` is [w, h, d].
+// The client builds Three.js meshes from these; the eyedropper samples the
+// `color` of whatever surface the player taps (done client-side via raycast).
 
-export const WORLD = { w: 1000, h: 1000 };
+export const POSES = ['standing', 'crouching', 'flat'];
 
-// Each surface: { x, y, w, h, color, label }
-// "props" are smaller objects good for posing against / hiding behind.
 export const MAPS = {
   living_room: {
     id: 'living_room',
     name: 'Living Room',
-    bg: '#e9dcc3',
-    surfaces: [
-      { x: 0, y: 0, w: 1000, h: 1000, color: '#e9dcc3', label: 'floor' },
-      { x: 0, y: 0, w: 1000, h: 180, color: '#c9a36b', label: 'wall' },
-      { x: 60, y: 620, w: 360, h: 200, color: '#7a5b46', label: 'couch' },
-      { x: 80, y: 640, w: 320, h: 90, color: '#9c7b5e', label: 'cushion' },
-      { x: 560, y: 240, w: 380, h: 150, color: '#5b6e54', label: 'bookshelf' },
-      { x: 600, y: 640, w: 220, h: 220, color: '#b23b3b', label: 'rug' },
-      { x: 430, y: 430, w: 140, h: 140, color: '#caa84a', label: 'table' },
-      { x: 250, y: 250, w: 110, h: 110, color: '#4f7a8a', label: 'plant' },
-      { x: 820, y: 60, w: 120, h: 100, color: '#d9d2c0', label: 'window' },
-    ],
-  },
-  aquarium: {
-    id: 'aquarium',
-    name: 'Aquarium',
-    bg: '#13496b',
-    surfaces: [
-      { x: 0, y: 0, w: 1000, h: 1000, color: '#13496b', label: 'water' },
-      { x: 0, y: 760, w: 1000, h: 240, color: '#1f6f7a', label: 'sandfloor' },
-      { x: 120, y: 320, w: 200, h: 360, color: '#2e8b7a', label: 'kelp' },
-      { x: 640, y: 360, w: 240, h: 300, color: '#3aa0a8', label: 'coral' },
-      { x: 420, y: 140, w: 180, h: 180, color: '#5fc1d4', label: 'bubble' },
-      { x: 740, y: 120, w: 150, h: 130, color: '#e0a85f', label: 'rock' },
-      { x: 300, y: 700, w: 160, h: 120, color: '#c96b8a', label: 'anemone' },
+    size: { x: 24, z: 24, h: 8 },
+    floorColor: '#caa472',
+    ceilColor: '#efe7d6',
+    wallColor: '#c9b48f',
+    boxes: [
+      // label, centre [x,y,z], size [w,h,d], color
+      { label: 'couch', pos: [-7, 1, -7], size: [7, 2, 3], color: '#7a5b46' },
+      { label: 'couch-back', pos: [-7, 2.2, -8.2], size: [7, 1.4, 0.6], color: '#6b4f3c' },
+      { label: 'rug', pos: [0, 0.05, 0], size: [9, 0.1, 7], color: '#b23b3b' },
+      { label: 'table', pos: [0, 0.6, 0], size: [3, 1.2, 2], color: '#caa84a' },
+      { label: 'bookshelf', pos: [9, 2.5, -3], size: [1.5, 5, 7], color: '#5b6e54' },
+      { label: 'plant', pos: [7, 1, 7], size: [1.6, 2, 1.6], color: '#4f7a8a' },
+      { label: 'tv-stand', pos: [-2, 1, 10.5], size: [8, 2, 1.5], color: '#3a3a44' },
+      { label: 'lamp', pos: [-9.5, 2.5, 8], size: [1, 5, 1], color: '#d9c27a' },
+      { label: 'crate', pos: [6, 0.75, -8], size: [1.6, 1.5, 1.6], color: '#9c7b5e' },
+      { label: 'cushion', pos: [-7, 2.3, -6.5], size: [1.4, 0.5, 1.4], color: '#c0563b' },
     ],
   },
   gallery: {
     id: 'gallery',
     name: 'Art Gallery',
-    bg: '#f1ede6',
-    surfaces: [
-      { x: 0, y: 0, w: 1000, h: 1000, color: '#f1ede6', label: 'floor' },
-      { x: 0, y: 0, w: 1000, h: 220, color: '#dcd6cb', label: 'wall' },
-      { x: 90, y: 40, w: 180, h: 140, color: '#c0563b', label: 'painting' },
-      { x: 410, y: 40, w: 180, h: 140, color: '#3b5ec0', label: 'painting' },
-      { x: 730, y: 40, w: 180, h: 140, color: '#3bc07a', label: 'painting' },
-      { x: 430, y: 420, w: 160, h: 320, color: '#b8b0a2', label: 'pillar' },
-      { x: 150, y: 600, w: 200, h: 200, color: '#8a8276', label: 'sculpture' },
-      { x: 700, y: 620, w: 180, h: 180, color: '#d8b24a', label: 'bench' },
+    size: { x: 28, z: 28, h: 9 },
+    floorColor: '#d8d2c6',
+    ceilColor: '#f3efe8',
+    wallColor: '#e6e0d5',
+    boxes: [
+      { label: 'pillar', pos: [-6, 2.5, -6], size: [2, 5, 2], color: '#b8b0a2' },
+      { label: 'pillar', pos: [6, 2.5, -6], size: [2, 5, 2], color: '#b8b0a2' },
+      { label: 'pillar', pos: [-6, 2.5, 6], size: [2, 5, 2], color: '#b8b0a2' },
+      { label: 'pillar', pos: [6, 2.5, 6], size: [2, 5, 2], color: '#b8b0a2' },
+      { label: 'painting-red', pos: [0, 4, -13.6], size: [4, 3, 0.3], color: '#c0563b' },
+      { label: 'painting-blue', pos: [-13.6, 4, 0], size: [0.3, 3, 4], color: '#3b5ec0' },
+      { label: 'painting-green', pos: [13.6, 4, 0], size: [0.3, 3, 4], color: '#3b8a4f' },
+      { label: 'bench', pos: [0, 0.5, 0], size: [4, 1, 1.4], color: '#8a8276' },
+      { label: 'sculpture', pos: [9, 1.2, 9], size: [2, 2.4, 2], color: '#d8b24a' },
+      { label: 'plinth', pos: [-9, 1, -9], size: [1.6, 2, 1.6], color: '#9b9486' },
     ],
   },
 };
 
 export const MAP_LIST = Object.values(MAPS).map((m) => ({ id: m.id, name: m.name }));
 
-// Sample the surface color at a world coordinate (topmost match wins).
-export function sampleColorAt(map, x, y) {
-  let color = map.bg;
-  for (const s of map.surfaces) {
-    if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) {
-      color = s.color;
-    }
-  }
-  return color;
+// A few floor spawn points away from the centre, inset from the walls.
+export function spawnPoints(map) {
+  const mx = map.size.x / 2 - 2;
+  const mz = map.size.z / 2 - 2;
+  return [
+    [-mx + 1, 0, -mz + 1], [mx - 1, 0, -mz + 1],
+    [-mx + 1, 0, mz - 1], [mx - 1, 0, mz - 1],
+    [0, 0, mz - 1], [0, 0, -mz + 1],
+    [mx - 1, 0, 0], [-mx + 1, 0, 0],
+  ];
+}
+
+export function clampToRoom(map, x, z) {
+  const mx = map.size.x / 2 - 1;
+  const mz = map.size.z / 2 - 1;
+  return [Math.max(-mx, Math.min(mx, x)), Math.max(-mz, Math.min(mz, z))];
 }
