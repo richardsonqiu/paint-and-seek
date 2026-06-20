@@ -1,56 +1,43 @@
-// Doodle Guys — client.
-import { MAPS, sampleColorAt, WORLD } from '/shared/maps.js';
-
-// Keep in sync with server/rooms.js POSE_BOX.
-const POSE_BOX = {
-  standing: { w: 64, h: 120 },
-  crouching: { w: 84, h: 84 },
-  flat: { w: 124, h: 52 },
-};
+// Doodle Guys — 3D client (Three.js).
+// Loads Three from a CDN via the importmap in index.html (the player's
+// browser fetches it). Home/lobby are plain DOM; the game is a WebGL scene.
+import * as THREE from 'three';
+import { MAPS, POSES } from '/shared/maps.js';
 
 const AVATARS = ['🦎', '🐙', '🐸', '🦊', '🐼', '🐯', '🐧', '🦄', '🐳', '👾', '🤖', '👻'];
-
 const socket = io();
 const $ = (id) => document.getElementById(id);
 
-// ---- Local UI state -----------------------------------------------------
-let myId = null;
-let snap = null;            // latest server snapshot
-let serverSkew = 0;        // serverNow - clientNow
-let inRoom = false;
+// ---- UI state -----------------------------------------------------------
+let myId = null, snap = null, serverSkew = 0, inRoom = false;
 let chosenAvatar = AVATARS[0];
-
-// Hider editing state (prep phase)
-let myBody = null;         // local working copy
-let curTool = 'eyedrop';   // 'move' | 'eyedrop'
 let curSeg = 'head';
+
+// Hider working body (local, smooth); seeker first-person position.
+let myBody = null, myBodyRound = -1;
+let seekerPos = null, seekerRound = -1;
 let lastPaintSent = 0;
 
-// ---- Screen helpers -----------------------------------------------------
+// ---- Screens ------------------------------------------------------------
 function show(screen) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   $(`screen-${screen}`).classList.add('active');
 }
 function toast(msg, ms = 1800) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.classList.remove('hidden');
-  clearTimeout(t._t);
-  t._t = setTimeout(() => t.classList.add('hidden'), ms);
+  const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
 }
+function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 // ---- Home ---------------------------------------------------------------
 function buildAvatars() {
-  const wrap = $('avatarPicker');
-  wrap.innerHTML = '';
+  const wrap = $('avatarPicker'); wrap.innerHTML = '';
   AVATARS.forEach((a) => {
     const b = document.createElement('button');
     b.textContent = a;
     if (a === chosenAvatar) b.classList.add('sel');
-    b.onclick = () => {
-      chosenAvatar = a;
-      buildAvatars();
-    };
+    b.onclick = () => { chosenAvatar = a; buildAvatars(); };
     wrap.appendChild(b);
   });
 }
@@ -58,12 +45,9 @@ function myInfo() {
   const name = ($('nameInput').value || '').trim().slice(0, 12) || 'Doodler';
   return { name, avatar: chosenAvatar };
 }
-
-$('createBtn').onclick = () => {
-  socket.emit('create', myInfo(), (res) => {
-    if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; }
-  });
-};
+$('createBtn').onclick = () => socket.emit('create', myInfo(), (res) => {
+  if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; }
+});
 $('joinBtn').onclick = () => doJoin($('codeInput').value);
 function doJoin(code) {
   code = (code || '').trim().toUpperCase();
@@ -79,24 +63,19 @@ $('leaveLobbyBtn').onclick = () => { socket.emit('leave'); inRoom = false; snap 
 $('startBtn').onclick = () => socket.emit('start');
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
-  const data = { title: 'Doodle Guys', text: `Join my game! Code: ${snap.code}`, url };
   try {
-    if (navigator.share) await navigator.share(data);
+    if (navigator.share) await navigator.share({ title: 'Doodle Guys', text: `Join my game! Code: ${snap.code}`, url });
     else { await navigator.clipboard.writeText(url); toast('Link copied!'); }
-  } catch (_) { /* user cancelled */ }
+  } catch (_) {}
 };
-
 function buildMapSelect() {
-  const sel = $('mapSelect');
-  if (sel.options.length) return;
+  const sel = $('mapSelect'); if (sel.options.length) return;
   Object.values(MAPS).forEach((m) => {
-    const o = document.createElement('option');
-    o.value = m.id; o.textContent = m.name; sel.appendChild(o);
+    const o = document.createElement('option'); o.value = m.id; o.textContent = m.name; sel.appendChild(o);
   });
 }
 ['mapSelect', 'modeSelect'].forEach((id) =>
-  $(id).addEventListener('change', () => socket.emit('settings', { [id.replace('Select', '')]: $(id).value }))
-);
+  $(id).addEventListener('change', () => socket.emit('settings', { [id.replace('Select', '')]: $(id).value })));
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
@@ -106,304 +85,432 @@ function renderLobby() {
   const isHost = snap.hostId === myId;
   $('playerCount').textContent = `(${snap.players.length}/12)`;
   $('playerList').innerHTML = snap.players.map((p) => `
-    <li>
-      <span class="pemoji">${p.avatar}</span>
-      <span class="pname">${escapeHtml(p.name)}</span>
-      ${p.isHost ? '<span class="tagbadge host">HOST</span>' : ''}
-    </li>`).join('');
-
+    <li><span class="pemoji">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span>
+    ${p.isHost ? '<span class="tagbadge host">HOST</span>' : ''}</li>`).join('');
   $('hostSettings').classList.toggle('hidden', !isHost);
   $('guestWait').classList.toggle('hidden', isHost);
-  const canStart = isHost && snap.players.length >= 2;
   $('startBtn').classList.toggle('hidden', !isHost);
-  $('startBtn').disabled = !canStart;
+  $('startBtn').disabled = !(isHost && snap.players.length >= 2);
   $('lobbyHint').textContent = snap.players.length < 2 ? 'Need at least 2 players to start.' : '';
-
   if (isHost) {
     buildMapSelect();
-    $('mapSelect').value = snap.settings.map;
-    $('modeSelect').value = snap.settings.mode;
-    $('prepInput').value = snap.settings.prepTime;
-    $('huntInput').value = snap.settings.huntTime;
+    $('mapSelect').value = snap.settings.map; $('modeSelect').value = snap.settings.mode;
+    $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
   }
 }
 
-// ---- Canvas / rendering -------------------------------------------------
+// ======================================================================
+//  THREE.JS SCENE
+// ======================================================================
+let renderer, scene, camera, raycaster, clock;
+let roomGroup = null, builtMapId = null;
+let envMeshes = [];                 // eyedropper raycast targets
+const charGroups = new Map();       // hider id -> Group (hunt phase)
+let myChar = null;                  // hider's own Group (prep)
+let threeReady = false;
+
+const cam = { yaw: 0, pitch: 0.4 };       // shared look angles
+const TP = { dist: 6.5, pitchMin: 0.08, pitchMax: 1.25 };
+const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
+const MOVE_SPEED = 5.0;
+
+function initThree() {
+  if (threeReady) return;
+  const canvas = $('stage');
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0a0612, 20, 60);
+  camera = new THREE.PerspectiveCamera(70, 1, 0.1, 200);
+  raycaster = new THREE.Raycaster();
+  clock = new THREE.Clock();
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x404060, 0.9);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(8, 20, 6);
+  scene.add(dir);
+
+  window.addEventListener('resize', resize);
+  threeReady = true;
+  animate();
+}
+
+function resize() {
+  if (!renderer) return;
+  const w = $('stage').clientWidth || window.innerWidth;
+  const h = $('stage').clientHeight || window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+function mat(color) { return new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.85, metalness: 0.0 }); }
+
+function buildScene(mapId) {
+  if (builtMapId === mapId && roomGroup) return;
+  if (roomGroup) { scene.remove(roomGroup); roomGroup = null; }
+  envMeshes = [];
+  const map = MAPS[mapId] || MAPS.living_room;
+  const g = new THREE.Group();
+  const { x: sx, z: sz, h: sh } = map.size;
+
+  // floor
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.floorColor));
+  floor.position.y = -0.1; g.add(floor); envMeshes.push(floor);
+  // ceiling
+  const ceil = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.2, sz), mat(map.ceilColor));
+  ceil.position.y = sh; g.add(ceil); envMeshes.push(ceil);
+  // 4 walls (faces inward; BackSide so we see them from inside)
+  const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(map.wallColor), roughness: 0.9, side: THREE.DoubleSide });
+  const mkWall = (w, h, d, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat.clone());
+    m.position.set(x, y, z); g.add(m); envMeshes.push(m);
+  };
+  mkWall(sx, sh, 0.2, 0, sh / 2, -sz / 2);
+  mkWall(sx, sh, 0.2, 0, sh / 2, sz / 2);
+  mkWall(0.2, sh, sz, -sx / 2, sh / 2, 0);
+  mkWall(0.2, sh, sz, sx / 2, sh / 2, 0);
+
+  // furniture boxes
+  for (const b of map.boxes) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]), mat(b.color));
+    m.position.set(b.pos[0], b.pos[1], b.pos[2]);
+    g.add(m); envMeshes.push(m);
+  }
+  scene.add(g);
+  roomGroup = g; builtMapId = mapId;
+}
+
+function buildCharacter(seg) {
+  const grp = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 18, 18), mat(seg.head)); head.position.y = 1.5;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.8, 0.36), mat(seg.torso)); torso.position.y = 0.95;
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.7, 0.34), mat(seg.legs)); legs.position.y = 0.35;
+  grp.add(head, torso, legs);
+  grp.userData.parts = { head, torso, legs };
+  return grp;
+}
+function setColors(g, seg) {
+  g.userData.parts.head.material.color.set(seg.head);
+  g.userData.parts.torso.material.color.set(seg.torso);
+  g.userData.parts.legs.material.color.set(seg.legs);
+}
+function setPose(g, pose) {
+  g.scale.set(1, 1, 1); g.rotation.x = 0; g.position.y = 0;
+  if (pose === 'crouching') g.scale.set(1.05, 0.6, 1.05);
+  else if (pose === 'flat') { g.rotation.x = Math.PI / 2; g.position.y = 0.35; }
+}
+function setFound(g, found) {
+  for (const p of Object.values(g.userData.parts)) {
+    p.material.emissive = new THREE.Color(found ? 0xff2d6b : 0x000000);
+    p.material.emissiveIntensity = found ? 0.7 : 0;
+    p.material.transparent = !!found;
+    p.material.opacity = found ? 0.5 : 1;
+  }
+}
+
+function ensureMyChar(body) {
+  if (!myChar) { myChar = buildCharacter(body.segments); scene.add(myChar); }
+  setColors(myChar, body.segments);
+  setPose(myChar, body.pose);
+  myChar.position.set(body.x, body.y || 0, body.z);
+  myChar.rotation.y = body.ry || 0;
+}
+function removeMyChar() { if (myChar) { scene.remove(myChar); myChar = null; } }
+
+function syncHunt(bodies) {
+  const seen = new Set();
+  for (const b of bodies) {
+    seen.add(b.id);
+    let g = charGroups.get(b.id);
+    if (!g) {
+      g = buildCharacter(b.segments);
+      g.userData.hiderId = b.id;
+      scene.add(g); charGroups.set(b.id, g);
+    }
+    setColors(g, b.segments);
+    setPose(g, b.pose);
+    g.position.set(b.x, b.y || 0, b.z);
+    g.rotation.y = b.ry || 0;       // setPose set rotation.x; keep yaw too
+    setFound(g, b.found);
+  }
+  for (const [id, g] of [...charGroups]) {
+    if (!seen.has(id)) { scene.remove(g); charGroups.delete(id); }
+  }
+}
+function clearChars() {
+  for (const [, g] of charGroups) scene.remove(g);
+  charGroups.clear();
+}
+
+// ---- Camera + movement --------------------------------------------------
+function forwardXZ(yaw) { return { x: Math.sin(yaw), z: Math.cos(yaw) }; }
+
+function bounds() {
+  const s = (snap && snap.mapSize) || { x: 24, z: 24 };
+  return { mx: s.x / 2 - 1, mz: s.z / 2 - 1 };
+}
+
+function applyMovement(dt) {
+  const j = joyVec;
+  if (snap.phase === 'prep' && snap.myRole === 'hider' && myBody) {
+    if (j.x || j.y) {
+      const f = forwardXZ(cam.yaw);
+      const r = { x: Math.cos(cam.yaw), z: -Math.sin(cam.yaw) };
+      let nx = myBody.x + (r.x * j.x + f.x * j.y) * MOVE_SPEED * dt;
+      let nz = myBody.z + (r.z * j.x + f.z * j.y) * MOVE_SPEED * dt;
+      const { mx, mz } = bounds();
+      myBody.x = clamp(nx, -mx, mx); myBody.z = clamp(nz, -mz, mz);
+      myBody.ry = Math.atan2(r.x * j.x + f.x * j.y, r.z * j.x + f.z * j.y);
+      ensureMyChar(myBody);
+      sendPaint(false);
+    }
+  } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
+    if (j.x || j.y) {
+      const f = forwardXZ(cam.yaw);
+      const r = { x: Math.cos(cam.yaw), z: -Math.sin(cam.yaw) };
+      let nx = seekerPos.x + (r.x * j.x + f.x * j.y) * MOVE_SPEED * dt;
+      let nz = seekerPos.z + (r.z * j.x + f.z * j.y) * MOVE_SPEED * dt;
+      const { mx, mz } = bounds();
+      seekerPos.x = clamp(nx, -mx, mx); seekerPos.z = clamp(nz, -mz, mz);
+    }
+  }
+}
+
+function updateCamera() {
+  const thirdPerson = (target) => {
+    cam.pitch = clamp(cam.pitch, TP.pitchMin, TP.pitchMax);
+    const f = forwardXZ(cam.yaw);
+    const horiz = TP.dist * Math.cos(cam.pitch);
+    camera.position.set(
+      target.x - f.x * horiz,
+      (target.y || 0) + 1.2 + TP.dist * Math.sin(cam.pitch),
+      target.z - f.z * horiz
+    );
+    camera.lookAt(target.x, (target.y || 0) + 1.0, target.z);
+  };
+  const firstPerson = (pos) => {
+    cam.pitch = clamp(cam.pitch, FP.pitchMin, FP.pitchMax);
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    const lx = Math.sin(cam.yaw) * cp, lz = Math.cos(cam.yaw) * cp;
+    camera.position.set(pos.x, FP.eye, pos.z);
+    camera.lookAt(pos.x + lx, FP.eye + sp, pos.z + lz);
+  };
+
+  if (snap.phase === 'prep' && snap.myRole === 'hider' && myBody) thirdPerson(myBody);
+  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) firstPerson(seekerPos);
+  else {
+    const mine = snap.bodies && snap.bodies.find((b) => b.mine);
+    if (mine) thirdPerson(mine);
+    else firstPerson(seekerPos || { x: 0, z: -8 });
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (!threeReady || !snap || snap.phase === 'lobby') return;
+  const dt = Math.min(clock.getDelta(), 0.05);
+  applyMovement(dt);
+  updateCamera();
+  renderer.render(scene, camera);
+}
+
+// ---- Input: joystick ----------------------------------------------------
+let joyVec = { x: 0, y: 0 }, joyId = null;
+const joyEl = $('joystick'), knob = $('joyKnob');
+function joyStart(e) {
+  joyId = e.pointerId; joyEl.setPointerCapture(joyId); joyMove(e); e.preventDefault();
+}
+function joyMove(e) {
+  if (e.pointerId !== joyId) return;
+  const r = joyEl.getBoundingClientRect();
+  let dx = e.clientX - (r.left + r.width / 2);
+  let dy = e.clientY - (r.top + r.height / 2);
+  const max = r.width / 2;
+  const d = Math.hypot(dx, dy);
+  if (d > max) { dx = dx / d * max; dy = dy / d * max; }
+  knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  joyVec = { x: dx / max, y: -dy / max };
+}
+function joyEnd(e) {
+  if (e.pointerId !== joyId) return;
+  joyId = null; joyVec = { x: 0, y: 0 };
+  knob.style.transform = 'translate(-50%, -50%)';
+}
+joyEl.addEventListener('pointerdown', joyStart);
+joyEl.addEventListener('pointermove', joyMove);
+joyEl.addEventListener('pointerup', joyEnd);
+joyEl.addEventListener('pointercancel', joyEnd);
+
+// ---- Input: look-drag + tap (eyedrop / tag) -----------------------------
+let lookId = null, lookStart = null, moved = 0;
 const canvas = $('stage');
-const ctx = canvas.getContext('2d');
-let CSS_SIZE = 320; // css px of square stage
-
-function fitCanvas() {
-  const wrap = canvas.parentElement;
-  const size = Math.min(wrap.clientWidth, wrap.clientHeight);
-  CSS_SIZE = Math.max(200, size);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.style.width = canvas.style.height = CSS_SIZE + 'px';
-  canvas.width = canvas.height = Math.round(CSS_SIZE * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-window.addEventListener('resize', fitCanvas);
-
-function worldToScreen(wx, wy) {
-  const s = CSS_SIZE / WORLD.w;
-  return [wx * s, wy * s];
-}
-function screenToWorld(sx, sy) {
-  const s = CSS_SIZE / WORLD.w;
-  return [sx / s, sy / s];
-}
-
-function roundRect(cx, cy, w, h, r) {
-  ctx.beginPath();
-  ctx.roundRect(cx - w / 2, cy - h / 2, w, h, r);
-}
-
-function drawFigure(cx, cy, pose, seg, opts = {}) {
-  const box = POSE_BOX[pose] || POSE_BOX.standing;
-  const s = CSS_SIZE / WORLD.w;
-  const w = box.w * s, h = box.h * s;
-  ctx.save();
-  ctx.globalAlpha = opts.alpha ?? 1;
-  if (opts.outline) {
-    ctx.shadowColor = opts.outline; ctx.shadowBlur = 10;
-  }
-  if (pose === 'flat') {
-    // lying horizontally: head left, torso mid, legs right
-    const partW = w / 3;
-    roundRect(cx - w / 2 + partW / 2, cy, partW * 0.9, h * 0.9, h * 0.4); ctx.fillStyle = seg.head; ctx.fill();
-    roundRect(cx, cy, partW * 1.0, h * 0.95, h * 0.25); ctx.fillStyle = seg.torso; ctx.fill();
-    roundRect(cx + w / 2 - partW / 2, cy, partW * 0.9, h * 0.75, h * 0.25); ctx.fillStyle = seg.legs; ctx.fill();
-  } else {
-    const headH = h * 0.30, torsoH = h * 0.42, legsH = h * 0.28;
-    const topY = cy - h / 2;
-    // head
-    ctx.beginPath();
-    ctx.arc(cx, topY + headH * 0.5, Math.min(w * 0.42, headH * 0.55), 0, Math.PI * 2);
-    ctx.fillStyle = seg.head; ctx.fill();
-    // torso
-    roundRect(cx, topY + headH + torsoH / 2, w, torsoH, w * 0.22); ctx.fillStyle = seg.torso; ctx.fill();
-    // legs
-    roundRect(cx, topY + headH + torsoH + legsH / 2, w * 0.82, legsH, w * 0.18); ctx.fillStyle = seg.legs; ctx.fill();
-  }
-  ctx.restore();
-
-  if (opts.label) {
-    ctx.save();
-    ctx.fillStyle = '#fff'; ctx.font = '600 11px system-ui'; ctx.textAlign = 'center';
-    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-    ctx.fillText(opts.label, cx, cy - h / 2 - 6);
-    ctx.restore();
-  }
-}
-
-function drawMap(map) {
-  ctx.fillStyle = map.bg;
-  ctx.fillRect(0, 0, CSS_SIZE, CSS_SIZE);
-  const s = CSS_SIZE / WORLD.w;
-  for (const sf of map.surfaces) {
-    ctx.fillStyle = sf.color;
-    ctx.fillRect(sf.x * s, sf.y * s, sf.w * s, sf.h * s);
-  }
-}
-
-function render() {
-  requestAnimationFrame(render);
-  if (!snap || snap.phase === 'lobby') return;
-  const map = MAPS[snap.mapId] || MAPS.living_room;
-  drawMap(map);
-
-  // Eyedrop reticle for hiders in prep
-  if (snap.phase === 'prep' && snap.myRole === 'hider' && myBody) {
-    const [sx, sy] = worldToScreen(myBody.x, myBody.y);
-    const highlight = (curTool === 'move')
-      ? '#5fd0ff' : null;
-    drawFigure(sx, sy, myBody.pose, myBody.segments, { outline: highlight, label: 'YOU' });
-  }
-
-  if (snap.phase === 'hunt' || snap.phase === 'roundover') {
-    for (const b of snap.bodies) {
-      const [sx, sy] = worldToScreen(b.x, b.y);
-      const seg = b.segments;
-      if (b.found) {
-        drawFigure(sx, sy, b.pose, seg, { outline: '#ff5fa2', alpha: 1, label: '✖ ' + (b.name || '') });
-      } else if (b.mine) {
-        drawFigure(sx, sy, b.pose, seg, { outline: '#57e389', label: 'YOU' });
-      } else {
-        // un-found hiders: render plainly — spotting them is the game
-        drawFigure(sx, sy, b.pose, seg, {});
-      }
-    }
-  }
-}
-
-// ---- Pointer input ------------------------------------------------------
-let dragging = false;
-function canvasPoint(e) {
-  const r = canvas.getBoundingClientRect();
-  const p = e.touches ? e.touches[0] : e;
-  return [p.clientX - r.left, p.clientY - r.top];
-}
-
 canvas.addEventListener('pointerdown', (e) => {
-  if (!snap) return;
-  const [sx, sy] = canvasPoint(e);
-  const [wx, wy] = screenToWorld(sx, sy);
-
-  if (snap.phase === 'prep' && snap.myRole === 'hider' && myBody) {
-    if (curTool === 'move') {
-      dragging = true;
-      myBody.x = clamp(wx, 0, 1000); myBody.y = clamp(wy, 0, 1000);
-      sendPaint(true);
-    } else {
-      const map = MAPS[snap.mapId];
-      const color = sampleColorAt(map, wx, wy);
-      applyColor(color);
-    }
-  } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
-    socket.emit('tag', { x: wx, y: wy });
-    flashAt(sx, sy);
-  }
+  if (lookId !== null) return;
+  lookId = e.pointerId; lookStart = { x: e.clientX, y: e.clientY, t: Date.now() }; moved = 0;
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (!dragging || !myBody) return;
-  const [sx, sy] = canvasPoint(e);
-  const [wx, wy] = screenToWorld(sx, sy);
-  myBody.x = clamp(wx, 0, 1000); myBody.y = clamp(wy, 0, 1000);
-  sendPaint(false);
+  if (e.pointerId !== lookId) return;
+  const dx = e.movementX || 0, dy = e.movementY || 0;
+  moved += Math.abs(dx) + Math.abs(dy);
+  cam.yaw -= dx * 0.005;
+  cam.pitch -= dy * 0.005;
 });
-window.addEventListener('pointerup', () => { if (dragging) { dragging = false; sendPaint(true); } });
+canvas.addEventListener('pointerup', (e) => {
+  if (e.pointerId !== lookId) return;
+  const quick = (Date.now() - lookStart.t) < 320 && moved < 12;
+  if (quick) handleTap(e.clientX, e.clientY);
+  lookId = null;
+});
+canvas.addEventListener('pointercancel', () => { lookId = null; });
 
-function flashAt(sx, sy) {
-  const f = document.createElement('div');
-  f.className = 'fly'; f.textContent = '🔍';
-  f.style.left = sx - 10 + 'px'; f.style.top = sy - 10 + 'px';
-  $('emoteFloat').appendChild(f);
-  setTimeout(() => f.remove(), 1200);
+function tapNDC(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  return new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
 }
 
+function handleTap(clientX, clientY) {
+  if (!snap) return;
+  const ndc = tapNDC(clientX, clientY);
+  raycaster.setFromCamera(ndc, camera);
+
+  if (snap.phase === 'prep' && snap.myRole === 'hider' && myBody) {
+    const hit = raycaster.intersectObjects(envMeshes, false)[0];
+    if (hit && hit.object.material && hit.object.material.color) {
+      applyColor('#' + hit.object.material.color.getHexString());
+    }
+  } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
+    const targets = [...charGroups.values()];
+    const hit = raycaster.intersectObjects(targets, true)[0];
+    if (hit) {
+      let o = hit.object;
+      while (o && o.userData.hiderId === undefined) o = o.parent;
+      if (o && o.userData.hiderId) { socket.emit('tag', { targetId: o.userData.hiderId }); pingTag(clientX, clientY); }
+    }
+  }
+}
+function pingTag(x, y) {
+  const f = document.createElement('div'); f.className = 'fly'; f.textContent = '🎯';
+  f.style.left = x - 16 + 'px'; f.style.top = y - 16 + 'px';
+  $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 1000);
+}
+
+// ---- Painting tools -----------------------------------------------------
 function applyColor(color) {
   if (!myBody) return;
   myBody.segments[curSeg] = color;
   $('colorInput').value = color;
+  ensureMyChar(myBody);
   sendPaint(true);
 }
 function sendPaint(force) {
   if (!myBody) return;
   const now = Date.now();
-  if (!force && now - lastPaintSent < 60) return;
+  if (!force && now - lastPaintSent < 70) return;
   lastPaintSent = now;
   socket.emit('paint', myBody);
 }
-
-// ---- Hider toolbar wiring ----------------------------------------------
-document.querySelectorAll('#hiderTools .tool[data-tool]').forEach((b) =>
-  b.addEventListener('click', () => {
-    curTool = b.dataset.tool;
-    document.querySelectorAll('#hiderTools .tool[data-tool]').forEach((x) => x.classList.toggle('active', x === b));
-  })
-);
 document.querySelectorAll('#hiderTools .seg').forEach((b) =>
   b.addEventListener('click', () => {
     curSeg = b.dataset.seg;
     document.querySelectorAll('#hiderTools .seg').forEach((x) => x.classList.toggle('active', x === b));
     if (myBody) $('colorInput').value = myBody.segments[curSeg];
-  })
-);
+  }));
 document.querySelectorAll('#hiderTools .pose').forEach((b) =>
   b.addEventListener('click', () => {
     if (!myBody) return;
     myBody.pose = b.dataset.pose;
     document.querySelectorAll('#hiderTools .pose').forEach((x) => x.classList.toggle('active', x === b));
-    sendPaint(true);
-  })
-);
+    ensureMyChar(myBody); sendPaint(true);
+  }));
 $('colorInput').addEventListener('input', (e) => applyColor(e.target.value));
 $('fillAllBtn').addEventListener('click', () => {
   if (!myBody) return;
   const c = $('colorInput').value;
   myBody.segments = { head: c, torso: c, legs: c };
-  sendPaint(true);
+  ensureMyChar(myBody); sendPaint(true);
 });
 
 // ---- Emotes -------------------------------------------------------------
 document.querySelectorAll('.emote').forEach((b) =>
-  b.addEventListener('click', () => socket.emit('emote', { emoji: b.dataset.emoji }))
-);
+  b.addEventListener('click', () => socket.emit('emote', { emoji: b.dataset.emoji })));
 function flyEmote(emoji) {
-  const f = document.createElement('div');
-  f.className = 'fly'; f.textContent = emoji;
-  f.style.left = 20 + Math.random() * 60 + '%';
-  f.style.top = 60 + Math.random() * 20 + '%';
-  $('emoteFloat').appendChild(f);
-  setTimeout(() => f.remove(), 1700);
+  const f = document.createElement('div'); f.className = 'fly'; f.textContent = emoji;
+  f.style.left = 20 + Math.random() * 60 + '%'; f.style.top = 55 + Math.random() * 20 + '%';
+  $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 1700);
 }
 
-// ---- Game UI update -----------------------------------------------------
+// ---- Per-snapshot game UI ----------------------------------------------
 function renderGame() {
-  const phase = snap.phase;
-  $('phaseLabel').textContent = phase.toUpperCase();
-  const role = snap.myRole || '';
-  const rl = $('roleLabel');
-  rl.textContent = role ? role.toUpperCase() : '';
-  rl.className = 'pill role ' + role;
+  initThree();
+  buildScene(snap.mapId);
+  resize();
 
+  const phase = snap.phase, role = snap.myRole || '';
+  $('phaseLabel').textContent = phase.toUpperCase();
+  const rl = $('roleLabel'); rl.textContent = role ? role.toUpperCase() : ''; rl.className = 'pill role ' + role;
   $('remainLabel').textContent = (phase === 'hunt' || phase === 'roundover')
     ? `${snap.remaining}/${snap.totalHiders} hidden` : `R${snap.round}/${snap.totalRounds}`;
 
-  // Init local body when entering prep as hider
-  if (phase === 'prep' && role === 'hider') {
-    const mine = snap.bodies.find((b) => b.mine);
-    if (mine && (!myBody || snap.round !== myBody._round)) {
-      myBody = { x: mine.x, y: mine.y, pose: mine.pose, segments: { ...mine.segments }, _round: snap.round };
-      $('colorInput').value = myBody.segments[curSeg];
-    }
+  // Init local actors per round
+  if (phase === 'prep' && role === 'hider' && snap.myBody && myBodyRound !== snap.round) {
+    myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
+               pose: snap.myBody.pose, segments: { ...snap.myBody.segments } };
+    myBodyRound = snap.round;
+    cam.yaw = 0; cam.pitch = 0.4;
+    $('colorInput').value = myBody.segments[curSeg];
   }
-  if (phase !== 'prep') { /* keep myBody for render during hunt via snapshot */ }
+  if (phase === 'hunt' && role === 'seeker' && seekerRound !== snap.round) {
+    const { mz } = bounds();
+    seekerPos = { x: 0, z: -(mz - 1) };
+    cam.yaw = 0; cam.pitch = 0;
+    seekerRound = snap.round;
+  }
 
-  // Toolbars + overlays
+  // Scene occupants
+  if (phase === 'prep' && role === 'hider' && myBody) { clearChars(); ensureMyChar(myBody); }
+  else { removeMyChar(); }
+  if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || []);
+  else clearChars();
+
+  // Controls visibility
   const isHiderPrep = phase === 'prep' && role === 'hider';
   const isSeekerHunt = phase === 'hunt' && role === 'seeker';
   $('hiderTools').classList.toggle('hidden', !isHiderPrep);
   $('seekerTools').classList.toggle('hidden', !isSeekerHunt);
+  $('joystick').classList.toggle('hidden', !(isHiderPrep || isSeekerHunt));
+  $('crosshair').classList.toggle('hidden', !isSeekerHunt);
   $('emoteBar').classList.toggle('hidden', phase !== 'hunt');
 
+  // Overlays
   const wait = $('waitOverlay');
   if (phase === 'prep' && role === 'seeker') {
     wait.classList.remove('hidden');
+    $('waitEmoji').textContent = '🎨';
     $('waitTitle').textContent = 'Hiders are painting…';
     $('waitText').textContent = 'Memorise the room. The hunt is coming.';
-    $('waitOverlay').querySelector('.big-emoji').textContent = '🎨';
   } else if (phase === 'hunt' && role === 'hider') {
-    wait.classList.add('hidden'); // hider sees the stage but can't move
-    toastFrozenOnce();
-  } else {
-    wait.classList.add('hidden');
-  }
+    wait.classList.add('hidden'); toastFrozenOnce();
+  } else wait.classList.add('hidden');
 
-  // Round-over scoreboard
   $('scoreOverlay').classList.toggle('hidden', phase !== 'roundover');
   if (phase === 'roundover') renderScores();
 }
 
-let _frozenToast = -1;
-function toastFrozenOnce() {
-  if (_frozenToast === snap.round) return;
-  _frozenToast = snap.round;
-  toast('❄️ Frozen! Hold still and hope.', 2400);
-}
+let _frozen = -1;
+function toastFrozenOnce() { if (_frozen === snap.round) return; _frozen = snap.round; toast('❄️ Frozen! Hold still.', 2400); }
 
 function renderScores() {
   const sorted = [...snap.players].sort((a, b) => b.score - a.score);
   const isFinal = snap.round >= snap.totalRounds;
   $('scoreTitle').textContent = isFinal ? '🏆 Final Scores' : `Round ${snap.round} done`;
   $('scoreList').innerHTML = sorted.map((p, i) => `
-    <li>
-      <span class="pemoji">${i === 0 ? '👑' : p.avatar}</span>
-      <span class="pname">${escapeHtml(p.name)}</span>
-      <span class="tagbadge ${p.role || ''}">${(p.role || '').toUpperCase()}</span>
-      <span class="pscore">${p.score}</span>
-    </li>`).join('');
+    <li><span class="pemoji">${i === 0 ? '👑' : p.avatar}</span>
+    <span class="pname">${escapeHtml(p.name)}</span>
+    <span class="tagbadge ${p.role || ''}">${(p.role || '').toUpperCase()}</span>
+    <span class="pscore">${p.score}</span></li>`).join('');
   $('nextHint').textContent = isFinal ? 'Returning to lobby…' : 'Next round starting soon…';
 }
 
@@ -412,39 +519,25 @@ setInterval(() => {
   if (!snap || snap.phase === 'lobby') return;
   const remaining = Math.max(0, snap.deadline - (Date.now() + serverSkew));
   const secs = Math.ceil(remaining / 1000);
-  const el = $('timer');
-  el.textContent = secs >= 0 ? String(secs) : '0';
+  const el = $('timer'); el.textContent = String(Math.max(0, secs));
   el.classList.toggle('low', secs <= 10 && (snap.phase === 'prep' || snap.phase === 'hunt'));
 }, 200);
 
-// ---- Socket events ------------------------------------------------------
+// ---- Socket -------------------------------------------------------------
 socket.on('connect', () => { myId = socket.id; });
 socket.on('state', (s) => {
-  snap = s;
-  myId = s.myId || myId;
-  serverSkew = s.now - Date.now();
+  snap = s; myId = s.myId || myId; serverSkew = s.now - Date.now();
   if (!inRoom) return;
   if (s.phase === 'lobby') { show('lobby'); renderLobby(); }
-  else { show('game'); fitCanvasIfNeeded(); renderGame(); }
+  else { show('game'); renderGame(); }
 });
 socket.on('tagged', ({ name, by }) => toast(`🎯 ${by} found ${name}!`));
-socket.on('miss', () => { /* silent miss; reticle already shown */ });
+socket.on('miss', () => {});
 socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));
-
-let _canvasReady = false;
-function fitCanvasIfNeeded() {
-  if (!_canvasReady) { fitCanvas(); _canvasReady = true; }
-  else fitCanvas();
-}
-
-// ---- Utils --------------------------------------------------------------
-function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
-function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 // ---- Boot ---------------------------------------------------------------
 buildAvatars();
 show('home');
-render();
 const params = new URLSearchParams(location.search);
 if (params.get('room')) $('codeInput').value = params.get('room').toUpperCase();

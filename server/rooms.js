@@ -1,19 +1,14 @@
-// Room + game-state management for Doodle Guys.
-// Server is authoritative for: role assignment, phase transitions,
-// tag validation, and scoring. Movement/painting during prep is
-// client-driven and broadcast.
+// Room + game-state management for Doodle Guys (3D).
+// Server is authoritative for: role assignment, phase transitions, tag
+// validation, and scoring. Movement/painting during prep is client-driven
+// and broadcast. Tagging is by target id — the seeker's client raycasts the
+// 3D scene to find who they tapped; the server validates state.
 
-import { MAPS } from '../shared/maps.js';
+import { MAPS, POSES, spawnPoints, clampToRoom } from '../shared/maps.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
-// Character footprint per pose, in world units (1000x1000 space).
-export const POSE_BOX = {
-  standing: { w: 64, h: 120 },
-  crouching: { w: 84, h: 84 },
-  flat: { w: 124, h: 52 },
-};
-export const POSES = Object.keys(POSE_BOX);
+export { POSES };
 
 export const DEFAULT_SETTINGS = {
   prepTime: 60,
@@ -23,21 +18,31 @@ export const DEFAULT_SETTINGS = {
   rounds: 3,
 };
 
+function blankBody(spawn) {
+  return {
+    x: spawn ? spawn[0] : 0,
+    y: 0,
+    z: spawn ? spawn[2] : 0,
+    ry: 0, // yaw, radians
+    pose: 'standing',
+    segments: { head: '#ffffff', torso: '#ffffff', legs: '#ffffff' },
+  };
+}
+
 export class Room {
   constructor(code) {
     this.code = code;
     this.hostId = null;
-    this.players = new Map(); // id -> player
+    this.players = new Map();
     this.settings = { ...DEFAULT_SETTINGS };
-    this.phase = 'lobby'; // lobby | prep | hunt | roundover
+    this.phase = 'lobby';
     this.round = 0;
-    this.deadline = 0; // epoch ms for current phase end
+    this.deadline = 0;
     this._timer = null;
   }
 
   addPlayer(id, name, avatar) {
-    const isFirst = this.players.size === 0;
-    if (isFirst) this.hostId = id;
+    if (this.players.size === 0) this.hostId = id;
     this.players.set(id, {
       id,
       name: name || 'Doodler',
@@ -46,13 +51,7 @@ export class Room {
       connected: true,
       score: 0,
       found: false,
-      // body lives in 1000x1000 world space
-      body: {
-        x: 500,
-        y: 500,
-        pose: 'standing',
-        segments: { head: '#ffffff', torso: '#ffffff', legs: '#ffffff' },
-      },
+      body: blankBody(),
     });
     return this.players.get(id);
   }
@@ -72,63 +71,40 @@ export class Room {
   activePlayers() {
     return [...this.players.values()].filter((p) => p.connected);
   }
-
   hiders() {
     return this.activePlayers().filter((p) => p.role === 'hider');
   }
-
   seekers() {
     return this.activePlayers().filter((p) => p.role === 'seeker');
   }
 
-  // Assign roles for a round. ~1 seeker per 3 players, min 1.
   assignRoles() {
     const players = this.activePlayers();
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     const seekerCount = Math.max(1, Math.floor(players.length / 3));
+    const spawns = spawnPoints(this.map);
+    let hiderIdx = 0;
     shuffled.forEach((p, i) => {
       p.role = i < seekerCount ? 'seeker' : 'hider';
       p.found = false;
-      // reset hiders to blank white at the map's spawn-ish center
       if (p.role === 'hider') {
-        p.body = {
-          x: 200 + Math.random() * 600,
-          y: 250 + Math.random() * 500,
-          pose: 'standing',
-          segments: { head: '#ffffff', torso: '#ffffff', legs: '#ffffff' },
-        };
+        p.body = blankBody(spawns[hiderIdx % spawns.length]);
+        hiderIdx++;
       }
     });
-  }
-
-  bodyBox(player) {
-    const box = POSE_BOX[player.body.pose] || POSE_BOX.standing;
-    return {
-      x: player.body.x - box.w / 2,
-      y: player.body.y - box.h / 2,
-      w: box.w,
-      h: box.h,
-    };
-  }
-
-  // Returns the topmost un-found hider hit by a tap, or null.
-  hiderAt(x, y) {
-    const hits = this.hiders().filter((p) => {
-      if (p.found) return false;
-      const b = this.bodyBox(p);
-      return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-    });
-    return hits.length ? hits[hits.length - 1] : null;
   }
 
   remainingHiders() {
     return this.hiders().filter((p) => !p.found);
   }
 
-  // Public snapshot. `forId` controls visibility:
-  // during prep, hiders only see themselves; seekers see nothing on-map.
-  // during hunt, un-found hiders are sent to everyone (they're frozen and
-  // the challenge is spotting them); found hiders are flagged revealed.
+  // Validate and apply a tag by target id.
+  tagById(targetId) {
+    const t = this.players.get(targetId);
+    if (!t || !t.connected || t.role !== 'hider' || t.found) return null;
+    return t;
+  }
+
   snapshot(forId) {
     const me = this.players.get(forId);
     const bodies = [];
@@ -147,6 +123,7 @@ export class Room {
         });
       }
     }
+    const map = this.map;
     return {
       code: this.code,
       hostId: this.hostId,
@@ -157,8 +134,10 @@ export class Room {
       now: Date.now(),
       settings: this.settings,
       mapId: this.settings.map,
+      mapSize: map.size,
       myRole: me ? me.role : null,
       myId: forId,
+      myBody: me && me.role === 'hider' ? me.body : null,
       bodies,
       remaining: this.remainingHiders().length,
       totalHiders: this.hiders().length,
@@ -179,7 +158,6 @@ export class RoomStore {
   constructor() {
     this.rooms = new Map();
   }
-
   newCode() {
     let code;
     do {
@@ -189,21 +167,20 @@ export class RoomStore {
     } while (this.rooms.has(code));
     return code;
   }
-
   create() {
     const code = this.newCode();
     const room = new Room(code);
     this.rooms.set(code, room);
     return room;
   }
-
   get(code) {
     return this.rooms.get((code || '').toUpperCase());
   }
-
   delete(code) {
     const room = this.rooms.get(code);
     if (room && room._timer) clearTimeout(room._timer);
     this.rooms.delete(code);
   }
 }
+
+export { clampToRoom };

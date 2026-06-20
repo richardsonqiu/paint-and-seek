@@ -32,17 +32,14 @@
       </div>
       <p id="homeError" class="error"></p>
     </div>
-    <p class="footnote">A paint-and-seek party game · inspired by Meccha Chameleon</p>
+    <p class="footnote">A 3D paint-and-seek party game · inspired by Meccha Chameleon</p>
   </section>
 
   <!-- LOBBY -->
   <section id="screen-lobby" class="screen">
     <header class="bar">
       <button id="leaveLobbyBtn" class="btn ghost">← Leave</button>
-      <div class="room-code">
-        <span class="muted">Room</span>
-        <strong id="lobbyCode">----</strong>
-      </div>
+      <div class="room-code"><span class="muted">Room</span><strong id="lobbyCode">----</strong></div>
       <button id="shareBtn" class="btn ghost">Share</button>
     </header>
     <div class="card">
@@ -51,12 +48,8 @@
     </div>
     <div id="hostSettings" class="card hidden">
       <h2>Settings</h2>
-      <label class="field">
-        <span>Map</span>
-        <select id="mapSelect"></select>
-      </label>
-      <label class="field">
-        <span>Mode</span>
+      <label class="field"><span>Map</span><select id="mapSelect"></select></label>
+      <label class="field"><span>Mode</span>
         <select id="modeSelect">
           <option value="classic">Classic — find all hiders</option>
           <option value="infection">Infection — caught hiders join seekers</option>
@@ -68,77 +61,38 @@
         <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="10" /></label>
       </div>
     </div>
-    <div class="card hidden" id="guestWait">
-      <p class="muted">Waiting for the host to start…</p>
-    </div>
+    <div class="card hidden" id="guestWait"><p class="muted">Waiting for the host to start…</p></div>
     <button id="startBtn" class="btn primary big hidden">Start Game</button>
     <p id="lobbyHint" class="footnote"></p>
   </section>
 
   <!-- GAME -->
   <section id="screen-game" class="screen">
-    <header class="bar slim">
+    <canvas id="stage"></canvas>
+
+    <header class="game-hud">
       <div class="hud-left">
         <span id="phaseLabel" class="pill">PREP</span>
         <span id="roleLabel" class="pill role"></span>
       </div>
       <div id="timer" class="timer">--</div>
-      <div class="hud-right">
-        <span id="remainLabel" class="pill"></span>
-      </div>
+      <div class="hud-right"><span id="remainLabel" class="pill"></span></div>
     </header>
 
-    <div class="stage-wrap">
-      <canvas id="stage"></canvas>
-      <div id="waitOverlay" class="overlay hidden">
-        <div class="overlay-inner">
-          <div class="big-emoji">🔍</div>
-          <h2 id="waitTitle">Get ready…</h2>
-          <p id="waitText" class="muted"></p>
-        </div>
+    <div id="crosshair" class="crosshair hidden">+</div>
+
+    <!-- Virtual movement joystick -->
+    <div id="joystick" class="joystick hidden"><div id="joyKnob" class="joy-knob"></div></div>
+
+    <!-- Overlays -->
+    <div id="waitOverlay" class="overlay hidden">
+      <div class="overlay-inner">
+        <div class="big-emoji" id="waitEmoji">🔍</div>
+        <h2 id="waitTitle">Get ready…</h2>
+        <p id="waitText" class="muted"></p>
       </div>
     </div>
 
-    <!-- Hider toolbar -->
-    <div id="hiderTools" class="toolbar hidden">
-      <div class="tool-row">
-        <button class="tool" data-tool="move">✋<small>Move</small></button>
-        <button class="tool active" data-tool="eyedrop">💧<small>Eyedrop</small></button>
-        <label class="tool color-tool">
-          🎨<small>Color</small>
-          <input id="colorInput" type="color" value="#ffffff" />
-        </label>
-        <button id="fillAllBtn" class="tool">🪣<small>Fill All</small></button>
-      </div>
-      <div class="tool-row">
-        <div class="seg-pick">
-          <button class="seg active" data-seg="head">Head</button>
-          <button class="seg" data-seg="torso">Body</button>
-          <button class="seg" data-seg="legs">Legs</button>
-        </div>
-        <div class="pose-pick">
-          <button class="pose active" data-pose="standing" title="Standing">🧍</button>
-          <button class="pose" data-pose="crouching" title="Crouching">🧎</button>
-          <button class="pose" data-pose="flat" title="Lying flat">🛌</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Seeker toolbar -->
-    <div id="seekerTools" class="toolbar hidden">
-      <p class="seeker-hint">Tap a doodler you think is hiding to tag them. Hunt shapes, not just colors.</p>
-    </div>
-
-    <!-- Emote bar -->
-    <div id="emoteBar" class="emote-bar hidden">
-      <button class="emote" data-emoji="😂">😂</button>
-      <button class="emote" data-emoji="😮">😮</button>
-      <button class="emote" data-emoji="😎">😎</button>
-      <button class="emote" data-emoji="👀">👀</button>
-      <button class="emote" data-emoji="🔥">🔥</button>
-    </div>
-
-    <!-- Round over -->
     <div id="scoreOverlay" class="overlay hidden">
       <div class="overlay-inner card">
         <h2 id="scoreTitle">Round over</h2>
@@ -147,10 +101,47 @@
       </div>
     </div>
 
+    <!-- Hider toolbar -->
+    <div id="hiderTools" class="toolbar hidden">
+      <div class="tool-row">
+        <div class="seg-pick">
+          <button class="seg active" data-seg="head">Head</button>
+          <button class="seg" data-seg="torso">Body</button>
+          <button class="seg" data-seg="legs">Legs</button>
+        </div>
+        <label class="tool color-tool">🎨<small>Color</small><input id="colorInput" type="color" value="#ffffff" /></label>
+        <button id="fillAllBtn" class="tool">🪣<small>Fill</small></button>
+      </div>
+      <div class="tool-row">
+        <div class="pose-pick">
+          <button class="pose active" data-pose="standing" title="Standing">🧍</button>
+          <button class="pose" data-pose="crouching" title="Crouching">🧎</button>
+          <button class="pose" data-pose="flat" title="Lying flat">🛌</button>
+        </div>
+        <p class="tool-hint">Joystick to move · drag to look · tap a surface to 💧 eyedrop</p>
+      </div>
+    </div>
+
+    <!-- Seeker toolbar -->
+    <div id="seekerTools" class="toolbar hidden">
+      <p class="seeker-hint">Joystick to walk · drag to look · tap a doodler to tag. Hunt shapes, not just colors.</p>
+    </div>
+
+    <div id="emoteBar" class="emote-bar hidden">
+      <button class="emote" data-emoji="😂">😂</button>
+      <button class="emote" data-emoji="😮">😮</button>
+      <button class="emote" data-emoji="😎">😎</button>
+      <button class="emote" data-emoji="👀">👀</button>
+      <button class="emote" data-emoji="🔥">🔥</button>
+    </div>
+
     <div id="emoteFloat" class="emote-float"></div>
     <div id="toast" class="toast hidden"></div>
   </section>
 
+  <script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/game.js"></script>
 </body>

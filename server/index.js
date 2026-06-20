@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import { RoomStore, POSES } from './rooms.js';
+import { RoomStore, POSES, clampToRoom } from './rooms.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -157,8 +157,11 @@ io.on('connection', (socket) => {
     const r = room();
     const p = me();
     if (!r || !p || r.phase !== 'prep' || p.role !== 'hider') return;
-    if (typeof body.x === 'number') p.body.x = clamp(body.x, 0, 1000);
-    if (typeof body.y === 'number') p.body.y = clamp(body.y, 0, 1000);
+    if (typeof body.x === 'number' && typeof body.z === 'number') {
+      const [cx, cz] = clampToRoom(r.map, body.x, body.z);
+      p.body.x = cx; p.body.z = cz;
+    }
+    if (typeof body.ry === 'number') p.body.ry = body.ry;
     if (POSES.includes(body.pose)) p.body.pose = body.pose;
     if (body.segments) {
       for (const k of ['head', 'torso', 'legs']) {
@@ -171,12 +174,13 @@ io.on('connection', (socket) => {
     io.to(socket.id).emit('state', r.snapshot(socket.id));
   });
 
-  // Seeker taps the map to tag.
-  socket.on('tag', ({ x, y }) => {
+  // Seeker tags a hider. The client raycasts the 3D scene and sends the
+  // target's id; the server validates phase/role/target.
+  socket.on('tag', ({ targetId }) => {
     const r = room();
     const p = me();
     if (!r || !p || r.phase !== 'hunt' || p.role !== 'seeker') return;
-    const hit = r.hiderAt(x, y);
+    const hit = r.tagById(targetId);
     if (hit && !hit.found) {
       hit.found = true;
       // Seeker reward + time bonus for tagging earlier in the hunt.
@@ -195,7 +199,7 @@ io.on('connection', (socket) => {
       broadcast(r);
       maybeEndEarly(r);
     } else {
-      io.to(socket.id).emit('miss', { x, y });
+      io.to(socket.id).emit('miss', {});
     }
   });
 
