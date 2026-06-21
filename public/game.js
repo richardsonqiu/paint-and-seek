@@ -32,6 +32,10 @@ function toast(msg, ms = 1800) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
 }
+// A little person silhouette, white when alive / red when caught.
+function personIcon(color) {
+  return `<svg viewBox="0 0 24 24" width="22" height="22"><path fill="${color}" d="M12 12a4.6 4.6 0 1 0-4.6-4.6A4.6 4.6 0 0 0 12 12Zm0 1.8c-3.7 0-8.4 1.9-8.4 5.6V21h16.8v-1.6c0-3.7-4.7-5.6-8.4-5.6Z"/></svg>`;
+}
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -581,16 +585,22 @@ function setPose(g, pose) {
   j.armL.rotation.set(0, 0, 0); j.armR.rotation.set(0, 0, 0);
   j.legL.rotation.set(0, 0, 0); j.legR.rotation.set(0, 0, 0);
 
+  // The 8 poses (à la "Hidden in Plain Sight"). Arms hang -Y from the shoulder
+  // pivots; rotation.x ~ PI swings them up, rotation.z spreads them out.
   switch (pose) {
-    case 'crouching':                 // squat low and compact
-      g.scale.set(S * 1.06, S * 0.6, S * 1.06);
-      j.upper.rotation.x = 0.25;
-      j.armL.rotation.x = 0.3; j.armR.rotation.x = 0.3;
+    case 'cheer':                     // both arms up in a V
+      j.armL.rotation.set(2.7, 0, -0.45); j.armR.rotation.set(2.7, 0, 0.45);
       break;
-    case 'fold':                      // fold the body in half over the legs
-      j.upper.rotation.x = 1.75;
-      // counter-rotate the arms so they dangle toward the ground
-      j.armL.rotation.x = -1.6; j.armR.rotation.x = -1.6;
+    case 'head':                      // hands on head (arms up & inward)
+      j.armL.rotation.set(2.7, 0, 0.8); j.armR.rotation.set(2.7, 0, -0.8);
+      break;
+    case 'wide':                      // star: arms & legs spread
+      j.armL.rotation.z = -1.3; j.armR.rotation.z = 1.3;
+      j.legL.rotation.z = -0.45; j.legR.rotation.z = 0.45;
+      break;
+    case 'wave':                      // one arm up, leaning
+      j.armR.rotation.set(2.8, 0, -0.2);
+      j.upper.rotation.z = -0.12;
       break;
     case 'ball':                      // curl into a round ball
       j.upper.rotation.x = 1.7;
@@ -598,12 +608,13 @@ function setPose(g, pose) {
       j.legL.rotation.x = -1.7; j.legR.rotation.x = -1.7;
       g.userData.baseY = 0.15 * S;
       break;
-    case 'wide':                      // spread arms & legs into a star/bush
-      j.armL.rotation.z = -1.25; j.armR.rotation.z = 1.25;
-      j.legL.rotation.z = -0.4; j.legR.rotation.z = 0.4;
-      break;
     case 'flat':                      // lie flat on the ground
       g.rotation.x = Math.PI / 2; g.userData.baseY = 0.4 * S;
+      break;
+    case 'kneel':                     // kneel / sit low
+      g.scale.set(S, S * 0.62, S);
+      j.legL.rotation.x = 0.5; j.legR.rotation.x = 0.5;
+      j.armL.rotation.x = 0.4; j.armR.rotation.x = 0.4;
       break;
     // 'standing' uses the clean reset above.
   }
@@ -619,7 +630,7 @@ function setFound(g, found) {
 function ensureMyChar(body) {
   if (!myChar) { myChar = buildCharacter(body.paint || null); scene.add(myChar); }
   setPose(myChar, body.pose);
-  myChar.position.set(body.x, (myChar.userData.baseY || 0), body.z);
+  myChar.position.set(body.x, (body.y || 0) + (myChar.userData.baseY || 0), body.z);
   myChar.rotation.y = body.ry || 0;
 }
 function removeMyChar() { if (myChar) { scene.remove(myChar); myChar = null; } }
@@ -637,7 +648,7 @@ function syncHunt(bodies, skipMine) {
     }
     applyPaintUrl(g, b.paint);
     setPose(g, b.pose);
-    g.position.set(b.x, (g.userData.baseY || 0), b.z);
+    g.position.set(b.x, (b.y || 0) + (g.userData.baseY || 0), b.z);
     g.rotation.y = b.ry || 0;       // setPose set rotation.x; keep yaw too
     setFound(g, b.found);
   }
@@ -676,7 +687,7 @@ function paintRaycast(clientX, clientY) {
   if (!myChar) return false;
   raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
   const hit = raycaster.intersectObject(myChar, true)[0];
-  if (hit && hit.uv) { paintAtUV(hit.uv); return true; }
+  if (hit && hit.uv) { paintAtUV(hit.uv); paintSplash(clientX, clientY); return true; }
   return false;
 }
 function endStroke() { lastDab = null; if (paintDirtyForSync) sendTexture(true); }
@@ -692,8 +703,13 @@ function fillAll() {
 function forwardXZ(yaw) { return { x: Math.sin(yaw), z: Math.cos(yaw) }; }
 
 function bounds() {
+  const map = snap && MAPS[snap.mapId];
+  if (map && map.bounds) {
+    const b = map.bounds;
+    return { minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ };
+  }
   const s = (snap && snap.mapSize) || { x: 24, z: 24 };
-  return { mx: s.x / 2 - 1, mz: s.z / 2 - 1 };
+  return { minX: -(s.x / 2 - 1), maxX: s.x / 2 - 1, minZ: -(s.z / 2 - 1), maxZ: s.z / 2 - 1 };
 }
 
 // Slide a point out of any solid AABB it has entered (axis of least overlap).
@@ -736,29 +752,96 @@ function slideMove(px, pz, nx, nz, y, rad) {
   return [nx, nz];
 }
 
+// ---- Jumping & clinging -------------------------------------------------
+const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4;
+let jumpRequested = false, clinging = false, nearSurface = false;
+
+function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
+
+// Surface height directly under (x,z), so the actor stands on floors/furniture.
+function groundUnder(x, y, z) {
+  if (collisionMeshes.length) {
+    _ro.set(x, y + 0.5, z); _rd.set(0, -1, 0);
+    _rc.set(_ro, _rd); _rc.far = y + 2;
+    const h = _rc.intersectObjects(collisionMeshes, true)[0];
+    if (h) return h.point.y;
+  }
+  return 0;
+}
+
+// Is there a clingable surface within reach (facing or joystick direction)?
+function detectSurface(p) {
+  if (!collisionMeshes.length) return false;
+  const dirs = [[Math.sin(p.ry), Math.cos(p.ry)]];
+  if (joyVec.x || joyVec.y) dirs.push([joyVec.x, joyVec.y]);
+  for (const [dx, dz] of dirs) {
+    _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(dx, 0, dz).normalize();
+    _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
+    if (_rc.intersectObjects(collisionMeshes, true).length) return true;
+  }
+  return false;
+}
+
 function applyMovement(dt) {
-  const j = joyVec;
-  if (!(j.x || j.y)) return;
-  const f = forwardXZ(cam.yaw);
-  const r = { x: Math.cos(cam.yaw), z: -Math.sin(cam.yaw) };
-  const { mx, mz } = bounds();
-  const step = (p, faceMove, speed, rad, rayY) => {
-    let nx = p.x + (r.x * j.x + f.x * j.y) * speed * dt;
-    let nz = p.z + (r.z * j.x + f.z * j.y) * speed * dt;
-    nx = clamp(nx, -mx, mx); nz = clamp(nz, -mz, mz);
-    [nx, nz] = resolveCollision(nx, nz, rad);
-    [nx, nz] = slideMove(p.x, p.z, nx, nz, rayY, rad);
-    p.x = nx; p.z = nz;
-    if (faceMove) p.ry = Math.atan2(r.x * j.x + f.x * j.y, r.z * j.x + f.z * j.y);
-  };
+  const b = bounds();
+  const moving = !!(joyVec.x || joyVec.y);
+  if (!hiderControls()) clinging = false;
 
   if (hiderControls()) {
-    // Tiny hider: slow, with a small footprint so it can tuck into gaps.
-    step(myBody, true, HIDER_MOVE_SPEED, 0.1, 0.12);
+    const p = myBody;
+    p.vy = p.vy || 0;
+    if (clinging) {
+      // Glide freely through/around the object to tuck in (no gravity/collision).
+      if (moving) {
+        p.x = clamp(p.x + joyVec.x * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        p.z = clamp(p.z + joyVec.y * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        p.ry = Math.atan2(joyVec.x, joyVec.y);
+      }
+      if (jumpRequested) { clinging = false; p.vy = JUMP_VEL * 0.5; }
+    } else {
+      // Horizontal: STATIC joystick — north is always +Z (into the scene),
+      // independent of where the camera is looking.
+      if (moving) {
+        let nx = clamp(p.x + joyVec.x * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + joyVec.y * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        [nx, nz] = resolveCollision(nx, nz, 0.1);
+        [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.1);
+        p.x = nx; p.z = nz;
+        p.ry = Math.atan2(joyVec.x, joyVec.y);
+        cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 6); // camera trails behind
+      }
+      // Vertical: gravity + jump.
+      if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
+      p.vy -= GRAVITY * dt;
+      let ny = (p.y || 0) + p.vy * dt;
+      const g = groundUnder(p.x, ny, p.z);
+      if (ny <= g) { ny = g; p.vy = 0; }
+      p.y = ny;
+    }
+    jumpRequested = false;
+    nearSurface = !clinging && detectSurface(p);
     ensureMyChar(myBody);
-    sendMove(false);
+    if (moving || clinging || p.vy !== 0) sendMove(false);
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
-    step(seekerPos, false, MOVE_SPEED, 0.4, 1.0);
+    const p = seekerPos; p.vy = p.vy || 0;
+    if (moving) {
+      // Seeker is first-person: camera-relative (walk where you look).
+      const f = forwardXZ(cam.yaw), r = { x: Math.cos(cam.yaw), z: -Math.sin(cam.yaw) };
+      let nx = clamp(p.x + (r.x * joyVec.x + f.x * joyVec.y) * MOVE_SPEED * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + (r.z * joyVec.x + f.z * joyVec.y) * MOVE_SPEED * dt, b.minZ, b.maxZ);
+      [nx, nz] = resolveCollision(nx, nz, 0.4);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 1.0, 0.4);
+      p.x = nx; p.z = nz;
+    }
+    if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
+    jumpRequested = false;
+    p.vy -= GRAVITY * dt;
+    let ny = (p.y || 0) + p.vy * dt;
+    const g = groundUnder(p.x, ny, p.z);
+    if (ny <= g) { ny = g; p.vy = 0; }
+    p.y = ny;
+  } else {
+    jumpRequested = false;
   }
 }
 
@@ -772,20 +855,35 @@ function updateCamera() {
     const f = forwardXZ(cam.yaw);
     const dist = TP.dist * s;
     const horiz = dist * Math.cos(cam.pitch);
+    const lookY = (target.y || 0) + 1.0 * s;
     let cx = target.x - f.x * horiz;
+    let cy = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
     let cz = target.z - f.z * horiz;
-    // Keep the camera out of walls so it never buries inside geometry while
-    // you orbit to paint.
-    [cx, cz] = resolveCollision(cx, cz, 0.2);
-    camera.position.set(cx, (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch), cz);
-    camera.lookAt(target.x, (target.y || 0) + 1.0 * s, target.z);
+    // Pull the camera in if geometry is between it and the doodler, so it never
+    // buries inside a wall/furniture (raycast from the doodler out to the camera).
+    if (collisionMeshes.length) {
+      _ro.set(target.x, lookY, target.z);
+      _rd.set(cx - target.x, cy - lookY, cz - target.z);
+      const full = _rd.length() || 1; _rd.normalize();
+      _rc.set(_ro, _rd); _rc.far = full;
+      const h = _rc.intersectObjects(collisionMeshes, true)[0];
+      if (h && h.distance < full) {
+        const d = Math.max(0.12, h.distance - 0.1);
+        cx = target.x + _rd.x * d; cy = lookY + _rd.y * d; cz = target.z + _rd.z * d;
+      }
+    } else {
+      [cx, cz] = resolveCollision(cx, cz, 0.2);
+    }
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(target.x, lookY, target.z);
   };
   const firstPerson = (pos) => {
     cam.pitch = clamp(cam.pitch, FP.pitchMin, FP.pitchMax);
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     const lx = Math.sin(cam.yaw) * cp, lz = Math.cos(cam.yaw) * cp;
-    camera.position.set(pos.x, FP.eye, pos.z);
-    camera.lookAt(pos.x + lx, FP.eye + sp, pos.z + lz);
+    const eye = (pos.y || 0) + FP.eye;
+    camera.position.set(pos.x, eye, pos.z);
+    camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
   };
 
   if (hiderControls()) thirdPerson(myBody, HIDER_SCALE);
@@ -816,15 +914,37 @@ function updateWalk(dt) {
   }
 }
 
+let _jumpVis = null, _clingVis = null;
+function updateActionButtons() {
+  const canMove = hiderControls();
+  const seekerHunt = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
+  const jv = canMove || seekerHunt;
+  const cv = canMove && (nearSurface || clinging);
+  if (jv !== _jumpVis) { _jumpVis = jv; $('jumpBtn').classList.toggle('hidden', !jv); }
+  if (cv !== _clingVis) { _clingVis = cv; $('clingBtn').classList.toggle('hidden', !cv); }
+  $('clingBtn').textContent = clinging ? '⤓' : '🧲';
+  // Crosshair turns red while the seeker's paint gun reloads.
+  if (seekerHunt) $('crosshair').classList.toggle('reloading', (Date.now() - lastShotAt) < 1000);
+}
+
 function animate() {
   requestAnimationFrame(animate);
   if (!threeReady || !snap || snap.phase === 'lobby') return;
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (joyId === null) joyVec = keyboardVec(); // keyboard drives movement when the stick is idle
   applyMovement(dt);
   updateWalk(dt);
+  updateActionButtons();
   updateCamera();
   renderer.render(scene, camera);
 }
+
+$('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jumpRequested = true; });
+$('clingBtn').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (clinging) clinging = false;
+  else if (nearSurface) clinging = true;
+});
 
 // ---- Input: joystick ----------------------------------------------------
 let joyVec = { x: 0, y: 0 }, joyId = null;
@@ -852,6 +972,33 @@ joyEl.addEventListener('pointerdown', joyStart);
 joyEl.addEventListener('pointermove', joyMove);
 joyEl.addEventListener('pointerup', joyEnd);
 joyEl.addEventListener('pointercancel', joyEnd);
+
+// ---- Input: keyboard + mouse (desktop) ----------------------------------
+// WASD / arrows move, Space jumps, E clings; mouse drag looks, click acts,
+// wheel zooms while painting. Keyboard drives the joystick vector when the
+// on-screen stick isn't being touched.
+const keyState = {};
+window.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (document.getElementById('screen-game') && !document.getElementById('screen-game').classList.contains('active')) return;
+  keyState[k] = true;
+  if (k === ' ') { jumpRequested = true; e.preventDefault(); }
+  if (k === 'e') { if (clinging) clinging = false; else if (nearSurface) clinging = true; }
+});
+window.addEventListener('keyup', (e) => { keyState[e.key.toLowerCase()] = false; });
+function keyboardVec() {
+  let x = 0, y = 0;
+  if (keyState['w'] || keyState['arrowup']) y += 1;
+  if (keyState['s'] || keyState['arrowdown']) y -= 1;
+  if (keyState['d'] || keyState['arrowright']) x += 1;
+  if (keyState['a'] || keyState['arrowleft']) x -= 1;
+  const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
+  return { x, y };
+}
+// Mouse wheel zooms the prep/paint camera in & out for fine detail.
+$('stage').addEventListener('wheel', (e) => {
+  if (hiderControls()) { TP.dist = clamp(TP.dist - e.deltaY * 0.0015, 1.4, 7); e.preventDefault(); }
+}, { passive: false });
 
 // ---- Input: paint / look-drag / tap -------------------------------------
 // While a hider preps: dragging on your doodler paints it; dragging on empty
@@ -905,21 +1052,44 @@ function handleTap(clientX, clientY) {
     const color = sampleScreenColor(clientX, clientY);
     if (color) setBrushColor(color);
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
-    const ndc = tapNDC(clientX, clientY);
-    raycaster.setFromCamera(ndc, camera);
-    const targets = [...charGroups.values()];
-    const hit = raycaster.intersectObjects(targets, true)[0];
-    let targetId = null;
-    if (hit) {
-      let o = hit.object;
-      while (o && o.userData.hiderId === undefined) o = o.parent;
-      if (o) targetId = o.userData.hiderId;
-    }
-    // The hiders are tiny, so a direct ray hit is hard; fall back to the
-    // nearest doodler within a small screen-space radius of the tap.
-    if (!targetId) targetId = nearestHiderOnScreen(clientX, clientY, 44);
-    if (targetId) { socket.emit('tag', { targetId }); pingTag(clientX, clientY); }
+    seekerShoot(clientX, clientY);
   }
+}
+
+// Seeker fires a paint blast at the tapped point. 1s reload (no spam). The
+// blast (and any catch) is resolved + broadcast by the server, so the splat
+// shows for everyone via the 'blast' event.
+const SHOOT_COLORS = ['#ff3bd0', '#ffd23b', '#3bd1ff', '#7CFC00', '#ff6b3b', '#b14bff'];
+let lastShotAt = 0;
+function seekerShoot(clientX, clientY) {
+  const now = Date.now();
+  if (now - lastShotAt < 1000) return; // reloading
+  raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
+  const targets = [];
+  if (roomGroup) targets.push(roomGroup);
+  for (const g of charGroups.values()) targets.push(g);
+  const hit = raycaster.intersectObjects(targets, true)[0];
+  const p = hit ? hit.point : raycaster.ray.at(25, new THREE.Vector3());
+  lastShotAt = now;
+  const color = SHOOT_COLORS[Math.floor(Math.random() * SHOOT_COLORS.length)];
+  socket.emit('shoot', { x: p.x, y: p.y, z: p.z, color });
+  pingTag(clientX, clientY);
+}
+
+// A paint splat at a world point — grows and fades; visible to everyone.
+function paintSplat(x, y, z, color) {
+  if (!scene) return;
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 12, 10),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity: 0.9 }));
+  m.position.set(x, y, z); scene.add(m);
+  const t0 = performance.now();
+  (function fade() {
+    const t = (performance.now() - t0) / 1600;
+    if (t >= 1) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); return; }
+    m.scale.setScalar(1 + t * 2.4); m.material.opacity = 0.9 * (1 - t);
+    requestAnimationFrame(fade);
+  })();
 }
 
 // Closest painted hider whose centre projects within `maxPx` of the tap.
@@ -982,7 +1152,7 @@ function sendMove(force) {
   const now = Date.now();
   if (!force && now - lastMoveSent < 70) return;
   lastMoveSent = now;
-  socket.emit('paint', { x: myBody.x, z: myBody.z, ry: myBody.ry, pose: myBody.pose });
+  socket.emit('paint', { x: myBody.x, y: myBody.y, z: myBody.z, ry: myBody.ry, pose: myBody.pose });
 }
 function sendTexture(force) {
   if (!myChar) return;
@@ -1009,6 +1179,37 @@ document.querySelectorAll('#hiderTools .pose').forEach((b) =>
 $('colorInput').addEventListener('input', (e) => setBrushColor(e.target.value));
 $('fillAllBtn').addEventListener('click', fillAll);
 
+// Colour palette: quick-pick swatches.
+const PALETTE = ['#ffffff', '#111111', '#e23b3b', '#f59e0b', '#ffe14d', '#3bd16a',
+  '#27a3c4', '#3b5ec0', '#9b51e0', '#e36bd0', '#7a5b46', '#c9b48f'];
+(function buildPalette() {
+  const wrap = $('palette'); if (!wrap) return;
+  PALETTE.forEach((c) => {
+    const b = document.createElement('button');
+    b.className = 'swatch'; b.style.background = c;
+    b.addEventListener('click', () => setBrushColor(c));
+    wrap.appendChild(b);
+  });
+})();
+
+// Minimise/expand a tool group.
+document.querySelectorAll('#hiderTools .tool-min').forEach((b) =>
+  b.addEventListener('click', () => {
+    const g = b.dataset.group;
+    document.querySelectorAll(`#hiderTools .tool-group[data-group="${g}"]`).forEach((el) => el.classList.toggle('collapsed'));
+    b.classList.toggle('off');
+  }));
+
+// A quick colour splash at the screen point you painted (visual feedback).
+let lastSplash = 0;
+function paintSplash(clientX, clientY) {
+  const now = Date.now(); if (now - lastSplash < 90) return; lastSplash = now;
+  const f = document.createElement('div'); f.className = 'splash';
+  f.style.left = clientX + 'px'; f.style.top = clientY + 'px';
+  f.style.background = brushColor;
+  $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 450);
+}
+
 // ---- Emotes -------------------------------------------------------------
 document.querySelectorAll('.emote').forEach((b) =>
   b.addEventListener('click', () => socket.emit('emote', { emoji: b.dataset.emoji })));
@@ -1030,22 +1231,28 @@ function renderGame() {
   $('remainLabel').textContent = (phase === 'hunt' || phase === 'roundover')
     ? `${snap.remaining}/${snap.totalHiders} hidden` : `R${snap.round}/${snap.totalRounds}`;
 
+  // Alive/caught hiders shown as person icons for everyone (white = alive,
+  // red = caught).
+  const hiders = snap.players.filter((p) => p.role === 'hider');
+  $('aliveBar').innerHTML = hiders.map((p) => personIcon(p.found ? '#ff4d4d' : '#ffffff')).join('');
+  $('aliveBar').classList.toggle('hidden', hiders.length === 0);
+
   // Init local actors per round. The hider keeps one local body across prep AND
   // hunt (so painting + position carry over into the chase).
   if (role === 'hider' && (phase === 'prep' || phase === 'hunt') && snap.myBody && myBodyRound !== snap.round) {
     myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
                pose: snap.myBody.pose, paint: snap.myBody.paint || null };
     myBodyRound = snap.round;
-    cam.yaw = 0; cam.pitch = 0.45;
+    cam.yaw = 0; cam.pitch = 0.45; TP.dist = 4.2; // reset paint-zoom
     removeMyChar();                 // fresh blank doodler (or restored paint)
     $('colorInput').value = brushColor;
     document.querySelectorAll('#hiderTools .brush').forEach((x) =>
       x.classList.toggle('active', x.dataset.size === brushSize));
   }
   if (phase === 'hunt' && role === 'seeker' && seekerRound !== snap.round) {
-    const { mz } = bounds();
-    seekerPos = { x: 0, z: -(mz - 1) };
-    cam.yaw = 0; cam.pitch = 0;
+    const sb = snap.myBody || { x: 0, z: 0 };  // server-assigned spawn (different room from hiders)
+    seekerPos = { x: sb.x, y: sb.y || 0, z: sb.z, vy: 0 };
+    cam.yaw = sb.ry || 0; cam.pitch = 0;
     seekerRound = snap.round;
   }
 
@@ -1114,8 +1321,9 @@ socket.on('state', (s) => {
   if (s.phase === 'lobby') { show('lobby'); renderLobby(); }
   else { show('game'); renderGame(); }
 });
-socket.on('tagged', ({ name, by }) => toast(`🎯 ${by} found ${name}!`));
+socket.on('tagged', ({ name, by }) => toast(`🎯 ${by} caught ${name}!`));
 socket.on('miss', () => {});
+socket.on('blast', ({ x, y, z, color }) => paintSplat(x, y, z, color));
 socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));
 

@@ -4,7 +4,9 @@
 // and broadcast. Tagging is by target id — the seeker's client raycasts the
 // 3D scene to find who they tapped; the server validates state.
 
-import { MAPS, POSES, spawnPoints, clampToRoom, DEFAULT_MAP_ID } from '../shared/maps.js';
+import { MAPS, POSES, spawnPoints, roomSpawns, clampToRoom, DEFAULT_MAP_ID } from '../shared/maps.js';
+
+function shuffle(a) { return [...a].sort(() => Math.random() - 0.5); }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
@@ -80,22 +82,29 @@ export class Room {
 
   assignRoles() {
     const players = this.activePlayers();
-    const shuffled = [...players].sort(() => Math.random() - 0.5);
+    const shuffled = shuffle(players);
     // ~1 seeker per 3 players, but always leave at least 1 hider so a solo
     // host can test (1 player -> 0 seekers, 1 hider).
     const seekerCount = Math.min(
       Math.max(1, Math.floor(players.length / 3)),
       Math.max(0, players.length - 1)
     );
-    const spawns = spawnPoints(this.map);
-    let hiderIdx = 0;
+    // Put seekers in one room and hiders in the other rooms, at random spots,
+    // so a hider never spawns right next to a seeker.
+    const rooms = roomSpawns(this.map);
+    const seekerRoom = Math.floor(Math.random() * rooms.length);
+    const hiderRoomIdx = rooms.length > 1
+      ? [...rooms.keys()].filter((i) => i !== seekerRoom) : [...rooms.keys()];
+    const seekerSpawns = shuffle(rooms[seekerRoom]);
+    const hiderSpawns = shuffle(hiderRoomIdx.flatMap((i) => rooms[i]));
+    let si = 0, hi = 0;
     shuffled.forEach((p, i) => {
       p.role = i < seekerCount ? 'seeker' : 'hider';
       p.found = false;
-      if (p.role === 'hider') {
-        p.body = blankBody(spawns[hiderIdx % spawns.length]);
-        hiderIdx++;
-      }
+      const spawn = p.role === 'seeker'
+        ? seekerSpawns[si++ % seekerSpawns.length]
+        : hiderSpawns[hi++ % hiderSpawns.length];
+      p.body = blankBody(spawn);
     });
   }
 
@@ -142,7 +151,7 @@ export class Room {
       mapSize: map.size,
       myRole: me ? me.role : null,
       myId: forId,
-      myBody: me && me.role === 'hider' ? me.body : null,
+      myBody: me ? me.body : null, // both roles get a server-assigned spawn
       bodies,
       remaining: this.remainingHiders().length,
       totalHiders: this.hiders().length,

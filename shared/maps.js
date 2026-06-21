@@ -24,9 +24,8 @@
 // `s` scales relative to the kit's calibrated base scale; `scale` overrides
 // with an absolute value. `solid` adds it to the collision set.
 
-// Postures a hider can strike to match nearby objects: tall, low/compact,
-// folded over, curled in a ball, spread wide, or lying flat.
-export const POSES = ['standing', 'crouching', 'fold', 'ball', 'wide', 'flat'];
+// The 8 doodler poses (à la the "Hidden in Plain Sight" figures).
+export const POSES = ['standing', 'cheer', 'head', 'wide', 'wave', 'ball', 'flat', 'kneel'];
 
 const TOWN = 'kenney_fantasy-town-kit_2.0';
 const PLAT = 'kenney_platformer-kit';
@@ -67,9 +66,13 @@ export const MAPS = {
     connectors: [
       { from: [20, 0], to: [28, 0], width: 7 },
     ],
-    spawns: [
-      [0, 0], [-12, 0], [12, 0], [0, -3], [0, 3], [-6, 0], [6, 0],
-      [24, 0], [40, 0], [40, 6], [40, -6], [34, 0],
+    // Confine play to the buildings + walkway (no wandering the empty void).
+    bounds: { minX: -23, maxX: 55, minZ: -15, maxZ: 15 },
+    // Spawn points grouped by room/flat. Each round the seeker and the hiders
+    // are placed in DIFFERENT rooms so the hider isn't trivially next to them.
+    spawnRooms: [
+      [[-12, 0], [12, 0], [0, -3], [0, 3], [-6, 0], [6, 0]],   // Flat A (floorplan)
+      [[40, 6], [40, -6], [34, 0], [46, 0]],                    // Flat B (apartment)
     ],
   },
 
@@ -220,8 +223,16 @@ export const DEFAULT_MAP_ID = 'rooms';
 
 export const MAP_LIST = Object.values(MAPS).map((m) => ({ id: m.id, name: m.name }));
 
+// Spawn points grouped by room: returns an array of rooms, each an array of
+// [x,y,z] points. Used to keep seekers and hiders in separate rooms.
+export function roomSpawns(map) {
+  if (map.spawnRooms) return map.spawnRooms.map((r) => r.map(([x, z]) => [x, 0, z]));
+  return [spawnPoints(map)];
+}
+
 // Spawn points spread across the rooms, inset from walls.
 export function spawnPoints(map) {
+  if (map.spawnRooms) return map.spawnRooms.flat().map(([x, z]) => [x, 0, z]);
   if (map.spawns) return map.spawns.map(([x, z]) => [x, 0, z]);
   return [
     [-18, 0, -18], [0, 0, -18], [18, 0, -18],

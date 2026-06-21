@@ -75,7 +75,10 @@
         <span id="phaseLabel" class="pill">PREP</span>
         <span id="roleLabel" class="pill role"></span>
       </div>
-      <div id="timer" class="timer">--</div>
+      <div class="hud-center">
+        <div id="timer" class="timer">--</div>
+        <div id="aliveBar" class="alive-bar hidden"></div>
+      </div>
       <div class="hud-right"><span id="remainLabel" class="pill"></span></div>
     </header>
 
@@ -83,6 +86,10 @@
 
     <!-- Virtual movement joystick -->
     <div id="joystick" class="joystick hidden"><div id="joyKnob" class="joy-knob"></div></div>
+
+    <!-- Action buttons -->
+    <button id="jumpBtn" class="action-btn jump hidden" title="Jump">⤴</button>
+    <button id="clingBtn" class="action-btn cling hidden" title="Cling to / release surface">🧲</button>
 
     <!-- Overlays -->
     <div id="waitOverlay" class="overlay hidden">
@@ -104,30 +111,36 @@
     <!-- Hider toolbar -->
     <div id="hiderTools" class="toolbar hidden">
       <div class="tool-row">
-        <div class="brush-pick">
-          <button class="brush" data-size="s" title="Fine brush"><span class="dot s"></span></button>
-          <button class="brush active" data-size="m" title="Medium brush"><span class="dot m"></span></button>
-          <button class="brush" data-size="l" title="Big brush"><span class="dot l"></span></button>
+        <button class="tool-min" data-group="paint" title="Minimise">🎨▾</button>
+        <div class="tool-group" data-group="paint">
+          <div class="brush-pick">
+            <button class="brush" data-size="s" title="Fine brush"><span class="dot s"></span></button>
+            <button class="brush active" data-size="m" title="Medium brush"><span class="dot m"></span></button>
+            <button class="brush" data-size="l" title="Big brush"><span class="dot l"></span></button>
+          </div>
+          <div id="palette" class="palette"></div>
+          <label class="tool color-tool">🎨<input id="colorInput" type="color" value="#3bd16a" /></label>
+          <button id="fillAllBtn" class="tool">🪣</button>
         </div>
-        <label class="tool color-tool">🎨<small>Color</small><input id="colorInput" type="color" value="#3bd16a" /></label>
-        <button id="fillAllBtn" class="tool">🪣<small>Fill</small></button>
       </div>
       <div class="tool-row">
-        <div class="pose-pick">
-          <button class="pose active" data-pose="standing" title="Stand tall">🧍</button>
-          <button class="pose" data-pose="crouching" title="Crouch low">🧎</button>
-          <button class="pose" data-pose="fold" title="Fold in half">🙇</button>
-          <button class="pose" data-pose="ball" title="Curl into a ball">🥚</button>
-          <button class="pose" data-pose="wide" title="Spread out wide">🤸</button>
+        <button class="tool-min" data-group="pose" title="Minimise">🤸▾</button>
+        <div class="pose-pick tool-group" data-group="pose">
+          <button class="pose active" data-pose="standing" title="Stand">🧍</button>
+          <button class="pose" data-pose="cheer" title="Arms up">🙌</button>
+          <button class="pose" data-pose="head" title="Hands on head">🙆</button>
+          <button class="pose" data-pose="wave" title="One arm up">🙋</button>
+          <button class="pose" data-pose="wide" title="Spread wide">🤸</button>
+          <button class="pose" data-pose="ball" title="Curl up">🥚</button>
+          <button class="pose" data-pose="kneel" title="Kneel">🧎</button>
           <button class="pose" data-pose="flat" title="Lie flat">🛌</button>
         </div>
       </div>
-      <p class="tool-hint">Drag <b>your doodler</b> to paint · drag elsewhere to look · tap a surface to 💧 copy its colour · pick a <b>pose</b> to match nearby objects</p>
     </div>
 
     <!-- Seeker toolbar -->
     <div id="seekerTools" class="toolbar hidden">
-      <p class="seeker-hint">Joystick to walk · drag to look · tap a doodler to tag. Hunt shapes, not just colors.</p>
+      <p class="seeker-hint">WASD/joystick to move · drag/mouse to look · tap to 💥 shoot paint (1s reload) · hit a doodler to catch it.</p>
     </div>
 
     <div id="emoteBar" class="emote-bar hidden">

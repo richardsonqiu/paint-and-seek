@@ -146,6 +146,22 @@ input:focus, select:focus { outline: none; border-color: var(--accent2); }
 .timer.low { color: var(--accent); animation: pulse .6s infinite alternate; }
 @keyframes pulse { to { transform: scale(1.12); } }
 
+/* Centre HUD: timer + alive-player icons */
+.hud-center { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.alive-bar { display: flex; gap: 3px; align-items: center; pointer-events: auto;
+  background: rgba(10,6,18,.5); padding: 3px 9px; border-radius: 99px; }
+.alive-bar svg { display: block; filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
+
+/* Action buttons (jump / cling) */
+.action-btn {
+  position: absolute; z-index: 6; width: 68px; height: 68px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.25); background: rgba(255,255,255,.14);
+  color: #fff; font-size: 30px; line-height: 1; cursor: pointer; touch-action: none;
+}
+.action-btn:active { background: rgba(255,255,255,.32); }
+.action-btn.jump { right: 24px; bottom: calc(120px + var(--safe-b)); }
+.action-btn.cling { right: 24px; bottom: calc(200px + var(--safe-b)); background: rgba(90,200,255,.26); }
+
 /* Overlays */
 .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(15,8,30,.82); backdrop-filter: blur(3px); z-index: 10; padding: 16px; }
 .overlay-inner { text-align: center; max-width: 360px; width: 100%; }
@@ -182,18 +198,53 @@ input:focus, select:focus { outline: none; border-color: var(--accent2); }
 .pose { flex: 1; background: var(--card2); border: 2px solid transparent; border-radius: 10px; height: 44px; font-size: 20px; cursor: pointer; }
 .pose.active { border-color: var(--accent2); }
 
+/* Tool groups: minimisable clusters */
+.tool-group { display: flex; gap: 6px; align-items: center; flex: 1; }
+.tool-group.collapsed { display: none; }
+.tool-min { background: var(--card2); border: none; border-radius: 10px; color: var(--ink); font-size: 12px; font-weight: 800; padding: 6px 8px; cursor: pointer; }
+.tool-min.off { opacity: .6; }
+
+/* Colour palette swatches */
+.palette { display: flex; gap: 4px; flex-wrap: wrap; max-width: 160px; }
+.swatch { width: 22px; height: 22px; border-radius: 6px; border: 2px solid rgba(255,255,255,.25); cursor: pointer; padding: 0; }
+.color-tool { flex: 0 0 auto; width: 46px; }
+
+/* Paint splash feedback */
+.splash { position: absolute; width: 26px; height: 26px; border-radius: 50%; transform: translate(-50%, -50%) scale(.3); opacity: .9; pointer-events: none; animation: splash .45s ease-out forwards; }
+@keyframes splash { to { transform: translate(-50%, -50%) scale(1.8); opacity: 0; } }
+
+/* Seeker reload state on the crosshair */
+.crosshair.reloading { color: var(--accent); opacity: .5; }
+
 .seeker-hint { margin: 0; padding: 6px 10px; font-size: 13px; color: var(--muted); text-align: center; }
 
-.emote-bar { position: absolute; right: 12px; bottom: calc(130px + var(--safe-b)); z-index: 6; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
-.emote { font-size: 24px; background: var(--card); border: none; border-radius: 12px; width: 50px; height: 46px; cursor: pointer; }
+/* Emotes: top-right column, so the bottom-right is free for the action buttons. */
+.emote-bar { position: absolute; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 56px); z-index: 6; display: flex; flex-direction: column; gap: 6px; }
+.emote { font-size: 22px; background: var(--card); border: none; border-radius: 12px; width: 44px; height: 40px; cursor: pointer; }
 
 .emote-float { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 8; }
 .emote-float .fly { position: absolute; font-size: 34px; animation: fly 1.6s ease-out forwards; }
 @keyframes fly { 0% { transform: translateY(0) scale(.6); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-120px) scale(1.3); opacity: 0; } }
 
+/* Landscape (phones held sideways): the screen is short, so slim the bottom
+   toolbar and tuck the controls in. */
+@media (orientation: landscape) and (max-height: 540px) {
+  /* Keep the bottom corners clear for the joystick (left) and buttons (right). */
+  .toolbar { padding: 5px; gap: 5px; left: 140px; right: 140px; bottom: 6px; }
+  .tool-hint { display: none; }
+  .pose, .brush { height: 36px; }
+  .joystick { width: 96px; height: 96px; bottom: calc(14px + var(--safe-b)); left: 14px; }
+  .joy-knob { width: 44px; height: 44px; }
+  .action-btn { width: 56px; height: 56px; font-size: 24px; }
+  .action-btn.jump { bottom: calc(14px + var(--safe-b)); right: 14px; }
+  .action-btn.cling { bottom: calc(80px + var(--safe-b)); right: 14px; }
+  .emote-bar { top: calc(env(safe-area-inset-top, 0px) + 48px); }
+}
+
 .toast { position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.85); padding: 10px 16px; border-radius: 99px; font-weight: 700; z-index: 9; max-width: 90%; text-align: center; }
 
 @media (min-width: 620px) {
   .screen { max-width: 460px; margin: 0 auto; width: 100%; }
-  #screen-game { max-width: 560px; }
+  /* The 3D game is always full-bleed (esp. for landscape phone play). */
+  #screen-game { max-width: none; }
 }

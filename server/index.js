@@ -165,6 +165,7 @@ io.on('connection', (socket) => {
       const [cx, cz] = clampToRoom(r.map, body.x, body.z);
       p.body.x = cx; p.body.z = cz;
     }
+    if (typeof body.y === 'number') p.body.y = Math.max(-2, Math.min(20, body.y));
     if (typeof body.ry === 'number') p.body.ry = body.ry;
     if (POSES.includes(body.pose)) p.body.pose = body.pose;
     if (r.phase === 'prep' && typeof body.paint === 'string' &&
@@ -204,6 +205,39 @@ io.on('connection', (socket) => {
       maybeEndEarly(r);
     } else {
       io.to(socket.id).emit('miss', {});
+    }
+  });
+
+  // Seeker fires a paint blast at a world point. Splatters paint (visible to
+  // everyone), catches any hider within the blast radius, and reloads for 1s.
+  socket.on('shoot', (data) => {
+    const r = room();
+    const p = me();
+    if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt' || !data) return;
+    if (typeof data.x !== 'number' || typeof data.z !== 'number') return;
+    const now = Date.now();
+    if (now - (p.lastShot || 0) < 1000) return; // 1s reload — no spam
+    p.lastShot = now;
+    const color = (typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color)) ? data.color : '#ff3bd0';
+    const y = typeof data.y === 'number' ? data.y : 0.5;
+    io.to(r.code).emit('blast', { x: data.x, y, z: data.z, color });
+
+    let hit = null, best = 2.0; // blast radius (metres)
+    for (const h of r.hiders()) {
+      if (h.found) continue;
+      const d = Math.hypot(h.body.x - data.x, h.body.z - data.z);
+      if (d < best) { best = d; hit = h; }
+    }
+    if (hit) {
+      hit.found = true;
+      const msLeft = Math.max(0, r.deadline - now);
+      p.score += 60 + Math.round((msLeft / (r.settings.huntTime * 1000)) * 40);
+      const elapsed = r.settings.huntTime * 1000 - msLeft;
+      hit.score += Math.round((elapsed / (r.settings.huntTime * 1000)) * 50);
+      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
+      io.to(r.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
+      broadcast(r);
+      maybeEndEarly(r);
     }
   });
 
