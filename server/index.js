@@ -148,30 +148,34 @@ io.on('connection', (socket) => {
   socket.on('start', () => {
     const r = room();
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
-    if (r.activePlayers().length < 2) return;
+    if (r.activePlayers().length < 1) return; // min 1 for easier testing
     startRound(r);
   });
 
-  // Hider updates body during prep only.
+  // Hiders move/pose during BOTH prep and the hunt (cat-and-mouse). The painted
+  // skin texture is only editable during prep. Movement/pose are small frequent
+  // messages; the texture arrives as a (throttled) data URL.
+  const MAX_PAINT_BYTES = 400000;
   socket.on('paint', (body) => {
     const r = room();
     const p = me();
-    if (!r || !p || r.phase !== 'prep' || p.role !== 'hider') return;
+    if (!r || !p || p.role !== 'hider' || p.found || !body) return;
+    if (r.phase !== 'prep' && r.phase !== 'hunt') return;
     if (typeof body.x === 'number' && typeof body.z === 'number') {
       const [cx, cz] = clampToRoom(r.map, body.x, body.z);
       p.body.x = cx; p.body.z = cz;
     }
     if (typeof body.ry === 'number') p.body.ry = body.ry;
     if (POSES.includes(body.pose)) p.body.pose = body.pose;
-    if (body.segments) {
-      for (const k of ['head', 'torso', 'legs']) {
-        if (typeof body.segments[k] === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.segments[k])) {
-          p.body.segments[k] = body.segments[k];
-        }
-      }
+    if (r.phase === 'prep' && typeof body.paint === 'string' &&
+        body.paint.startsWith('data:image/') &&
+        body.paint.length <= MAX_PAINT_BYTES) {
+      p.body.paint = body.paint;
     }
-    // No full broadcast on every paint tick — only the actor needs echo.
-    io.to(socket.id).emit('state', r.snapshot(socket.id));
+    // During the hunt, seekers must see hiders move, so broadcast to everyone.
+    // During prep, only the actor needs the echo.
+    if (r.phase === 'hunt') broadcast(r);
+    else io.to(socket.id).emit('state', r.snapshot(socket.id));
   });
 
   // Seeker tags a hider. The client raycasts the 3D scene and sends the

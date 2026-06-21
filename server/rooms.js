@@ -4,7 +4,7 @@
 // and broadcast. Tagging is by target id — the seeker's client raycasts the
 // 3D scene to find who they tapped; the server validates state.
 
-import { MAPS, POSES, spawnPoints, clampToRoom } from '../shared/maps.js';
+import { MAPS, POSES, spawnPoints, clampToRoom, DEFAULT_MAP_ID } from '../shared/maps.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
@@ -13,7 +13,7 @@ export { POSES };
 export const DEFAULT_SETTINGS = {
   prepTime: 60,
   huntTime: 120,
-  map: 'living_room',
+  map: DEFAULT_MAP_ID,
   mode: 'classic', // 'classic' | 'infection'
   rounds: 3,
 };
@@ -25,7 +25,7 @@ function blankBody(spawn) {
     z: spawn ? spawn[2] : 0,
     ry: 0, // yaw, radians
     pose: 'standing',
-    segments: { head: '#ffffff', torso: '#ffffff', legs: '#ffffff' },
+    paint: null, // data-URL of the painted skin texture (null = blank white)
   };
 }
 
@@ -65,7 +65,7 @@ export class Room {
   }
 
   get map() {
-    return MAPS[this.settings.map] || MAPS.living_room;
+    return MAPS[this.settings.map] || MAPS[DEFAULT_MAP_ID];
   }
 
   activePlayers() {
@@ -81,7 +81,12 @@ export class Room {
   assignRoles() {
     const players = this.activePlayers();
     const shuffled = [...players].sort(() => Math.random() - 0.5);
-    const seekerCount = Math.max(1, Math.floor(players.length / 3));
+    // ~1 seeker per 3 players, but always leave at least 1 hider so a solo
+    // host can test (1 player -> 0 seekers, 1 hider).
+    const seekerCount = Math.min(
+      Math.max(1, Math.floor(players.length / 3)),
+      Math.max(0, players.length - 1)
+    );
     const spawns = spawnPoints(this.map);
     let hiderIdx = 0;
     shuffled.forEach((p, i) => {

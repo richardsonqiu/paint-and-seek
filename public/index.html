@@ -104,22 +104,25 @@
     <!-- Hider toolbar -->
     <div id="hiderTools" class="toolbar hidden">
       <div class="tool-row">
-        <div class="seg-pick">
-          <button class="seg active" data-seg="head">Head</button>
-          <button class="seg" data-seg="torso">Body</button>
-          <button class="seg" data-seg="legs">Legs</button>
+        <div class="brush-pick">
+          <button class="brush" data-size="s" title="Fine brush"><span class="dot s"></span></button>
+          <button class="brush active" data-size="m" title="Medium brush"><span class="dot m"></span></button>
+          <button class="brush" data-size="l" title="Big brush"><span class="dot l"></span></button>
         </div>
-        <label class="tool color-tool">🎨<small>Color</small><input id="colorInput" type="color" value="#ffffff" /></label>
+        <label class="tool color-tool">🎨<small>Color</small><input id="colorInput" type="color" value="#3bd16a" /></label>
         <button id="fillAllBtn" class="tool">🪣<small>Fill</small></button>
       </div>
       <div class="tool-row">
         <div class="pose-pick">
-          <button class="pose active" data-pose="standing" title="Standing">🧍</button>
-          <button class="pose" data-pose="crouching" title="Crouching">🧎</button>
-          <button class="pose" data-pose="flat" title="Lying flat">🛌</button>
+          <button class="pose active" data-pose="standing" title="Stand tall">🧍</button>
+          <button class="pose" data-pose="crouching" title="Crouch low">🧎</button>
+          <button class="pose" data-pose="fold" title="Fold in half">🙇</button>
+          <button class="pose" data-pose="ball" title="Curl into a ball">🥚</button>
+          <button class="pose" data-pose="wide" title="Spread out wide">🤸</button>
+          <button class="pose" data-pose="flat" title="Lie flat">🛌</button>
         </div>
-        <p class="tool-hint">Joystick to move · drag to look · tap a surface to 💧 eyedrop</p>
       </div>
+      <p class="tool-hint">Drag <b>your doodler</b> to paint · drag elsewhere to look · tap a surface to 💧 copy its colour · pick a <b>pose</b> to match nearby objects</p>
     </div>
 
     <!-- Seeker toolbar -->
@@ -140,7 +143,12 @@
   </section>
 
   <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
   </script>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/game.js"></script>
