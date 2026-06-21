@@ -358,6 +358,7 @@ function buildConnector(group, c) {
     new THREE.MeshStandardMaterial({ color: new THREE.Color(c.floor || '#b9b6ad'), roughness: 1 }));
   floor.position.set(mx, -0.05, mz); floor.rotation.y = ang; floor.receiveShadow = true;
   group.add(floor);
+  collisionMeshes.push(floor); // counts as walkable floor
 
   const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.wall || '#d9d3c7'), roughness: 1 });
   for (const side of [-1, 1]) {
@@ -753,10 +754,29 @@ function slideMove(px, pz, nx, nz, y, rad) {
 }
 
 // ---- Jumping & clinging -------------------------------------------------
-const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4;
+const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4, TURN_RATE = 2.6;
 let jumpRequested = false, clinging = false, nearSurface = false;
 
 function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
+
+// Push a point out of any wall/object it's overlapping (so you can never end up
+// inside geometry). Casts short rays on the 4 axes and shoves out.
+function depenetrate(p, rayY, rad) {
+  if (!collisionMeshes.length) return;
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const d = castDist(p.x, rayY, p.z, dx, dz);
+    if (d < rad) { p.x -= dx * (rad - d + 0.01); p.z -= dz * (rad - d + 0.01); }
+  }
+}
+
+// Is there a building floor under (x,z)? Used to keep players ON the floors and
+// out of the surrounding void (anti-escape).
+function hasFloor(x, z, fromY) {
+  if (!collisionMeshes.length) return true;
+  _ro.set(x, (fromY || 0) + 0.6, z); _rd.set(0, -1, 0);
+  _rc.set(_ro, _rd); _rc.far = (fromY || 0) + 12;
+  return _rc.intersectObjects(collisionMeshes, true).length > 0;
+}
 
 // Surface height directly under (x,z), so the actor stands on floors/furniture.
 function groundUnder(x, y, z) {
@@ -784,33 +804,38 @@ function detectSurface(p) {
 
 function applyMovement(dt) {
   const b = bounds();
-  const moving = !!(joyVec.x || joyVec.y);
+  const turn = joyVec.x;   // A / left  = turn left,  D / right = turn right
+  const fwd = joyVec.y;    // W / up    = forward,    S / down  = backward
   if (!hiderControls()) clinging = false;
 
   if (hiderControls()) {
-    const p = myBody;
-    p.vy = p.vy || 0;
+    const p = myBody; p.vy = p.vy || 0;
+    const HRAD = 0.16, RAYY = (p.y || 0) + 0.12;
     if (clinging) {
-      // Glide freely through/around the object to tuck in (no gravity/collision).
-      if (moving) {
-        p.x = clamp(p.x + joyVec.x * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        p.z = clamp(p.z + joyVec.y * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
-        p.ry = Math.atan2(joyVec.x, joyVec.y);
+      // Attached to a surface: climb up/down and strafe sideways (collision
+      // still on, so you don't pass through it). Jump to let go.
+      if (fwd) p.y = clamp((p.y || 0) + fwd * HIDER_MOVE_SPEED * dt, 0, 9);     // climb (capped)
+      if (turn) {
+        const r = { x: Math.cos(p.ry), z: -Math.sin(p.ry) };                    // strafe along wall
+        let nx = clamp(p.x + r.x * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + r.z * turn * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
+        p.x = nx; p.z = nz;
       }
+      p.vy = 0;
       if (jumpRequested) { clinging = false; p.vy = JUMP_VEL * 0.5; }
     } else {
-      // Horizontal: STATIC joystick — north is always +Z (into the scene),
-      // independent of where the camera is looking.
-      if (moving) {
-        let nx = clamp(p.x + joyVec.x * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + joyVec.y * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
-        [nx, nz] = resolveCollision(nx, nz, 0.1);
-        [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.1);
-        p.x = nx; p.z = nz;
-        p.ry = Math.atan2(joyVec.x, joyVec.y);
-        cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 6); // camera trails behind
+      // TANK controls: turn to face, then move forward/back along that facing.
+      if (turn) p.ry += turn * TURN_RATE * dt;
+      if (fwd) {
+        const f = forwardXZ(p.ry);
+        let nx = clamp(p.x + f.x * fwd * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + f.z * fwd * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD);
+        if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; } // stay on the building floor
       }
-      // Vertical: gravity + jump.
+      depenetrate(p, RAYY, HRAD);
+      if (turn || fwd) cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 8); // camera follows facing
       if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
       p.vy -= GRAVITY * dt;
       let ny = (p.y || 0) + p.vy * dt;
@@ -821,18 +846,20 @@ function applyMovement(dt) {
     jumpRequested = false;
     nearSurface = !clinging && detectSurface(p);
     ensureMyChar(myBody);
-    if (moving || clinging || p.vy !== 0) sendMove(false);
+    if (turn || fwd || clinging || p.vy !== 0) sendMove(false);
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     const p = seekerPos; p.vy = p.vy || 0;
-    if (moving) {
-      // Seeker is first-person: camera-relative (walk where you look).
-      const f = forwardXZ(cam.yaw), r = { x: Math.cos(cam.yaw), z: -Math.sin(cam.yaw) };
-      let nx = clamp(p.x + (r.x * joyVec.x + f.x * joyVec.y) * MOVE_SPEED * dt, b.minX, b.maxX);
-      let nz = clamp(p.z + (r.z * joyVec.x + f.z * joyVec.y) * MOVE_SPEED * dt, b.minZ, b.maxZ);
-      [nx, nz] = resolveCollision(nx, nz, 0.4);
-      [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 1.0, 0.4);
-      p.x = nx; p.z = nz;
+    const SRAD = 0.4, RAYY = (p.y || 0) + 1.0;
+    // First-person tank: A/D turn the view, W/S move along it.
+    if (turn) cam.yaw += turn * TURN_RATE * dt;
+    if (fwd) {
+      const f = forwardXZ(cam.yaw);
+      let nx = clamp(p.x + f.x * fwd * MOVE_SPEED * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + f.z * fwd * MOVE_SPEED * dt, b.minZ, b.maxZ);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD);
+      if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; } // stay on the building floor
     }
+    depenetrate(p, RAYY, SRAD);
     if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
     jumpRequested = false;
     p.vy -= GRAVITY * dt;
@@ -899,11 +926,11 @@ function updateCamera() {
 // moving; settle back to the chosen pose when still.
 let walkPhase = 0;
 function updateWalk(dt) {
-  if (!myChar || !hiderControls()) return;
+  if (!myChar || !hiderControls() || clinging) return;
   const pose = myBody.pose;
-  if (pose !== 'standing' && pose !== 'crouching') return; // other poses are held
+  if (pose !== 'standing') return; // other poses are held
   const j = myChar.userData.joints;
-  if (joyVec.x || joyVec.y) {
+  if (Math.abs(joyVec.y) > 0.05) {            // walking forward/back
     walkPhase += dt * 11;
     const a = Math.sin(walkPhase) * 0.5;
     j.legL.rotation.x = a; j.legR.rotation.x = -a;
