@@ -834,12 +834,6 @@ function detectSurface(p) {
   }
   return false;
 }
-// Is the clung surface still in front at height y? (false once you climb past its top edge)
-function surfaceAlong(p, y) {
-  _ro.set(p.x, (y || 0) + 0.12, p.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
-  _rc.set(_ro, _rd); _rc.far = 1.0;
-  return _rc.intersectObjects(collisionMeshes, true).length > 0;
-}
 
 function applyMovement(dt) {
   const b = bounds();
@@ -851,26 +845,9 @@ function applyMovement(dt) {
     const p = myBody; p.vy = p.vy || 0;
     const HRAD = 0.16, RAYY = (p.y || 0) + 0.12;
     if (clinging) {
-      // Climb the clung surface; strafe sideways along it. Collision stays on.
-      if (fwd > 0) {                                   // climbing up
-        const ny = (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt;
-        if (!surfaceAlong(p, ny)) {
-          // Reached the top edge of what we're clinging to → climb onto it & let go.
-          const fx = clamp(p.x + clingDir.x * 0.3, b.minX, b.maxX);
-          const fz = clamp(p.z + clingDir.z * 0.3, b.minZ, b.maxZ);
-          if (hasFloor(fx, fz, p.y)) {
-            p.x = fx; p.z = fz; p.y = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
-            clinging = false;
-          }
-          // no top to stand on (overhang) → just stop rising
-        } else if (ny <= ROOF) {
-          p.y = ny;                                    // surface still here → keep climbing
-        }
-      } else if (fwd < 0) {                            // climbing down
-        p.y = Math.max(0, (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt);
-        const g = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
-        if ((p.y || 0) <= g + 0.05) { p.y = g; clinging = false; } // reached floor → let go
-      }
+      // Climb up/down the surface and strafe sideways along it.
+      if (fwd > 0) { const ny = (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt; if (ny <= ROOF) p.y = ny; }
+      else if (fwd < 0) { p.y = Math.max(0, (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt); }
       if (turn) {                                      // strafe perpendicular to the surface
         const px = -clingDir.z, pz = clingDir.x;
         let nx = clamp(p.x + px * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
@@ -878,7 +855,23 @@ function applyMovement(dt) {
         [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
         p.x = nx; p.z = nz;
       }
-      p.vy = 0;
+      // Re-stick to the surface; let go (and fall) once it's no longer there —
+      // i.e. you climbed over its top edge or strafed past its side.
+      _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
+      _rc.set(_ro, _rd); _rc.far = 1.3;
+      const sh = _rc.intersectObjects(collisionMeshes, true)[0];
+      const gy = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
+      if ((p.y || 0) <= gy + 0.05) { p.y = gy; clinging = false; }      // reached the floor
+      else if (sh) { p.x = sh.point.x - clingDir.x * 0.3; p.z = sh.point.z - clingDir.z * 0.3; } // stay glued
+      else {                                                            // surface ended
+        const fx = clamp(p.x + clingDir.x * 0.35, b.minX, b.maxX);
+        const fz = clamp(p.z + clingDir.z * 0.35, b.minZ, b.maxZ);
+        if (fwd > 0 && hasFloor(fx, fz, p.y)) {                         // crested the top → step on
+          p.x = fx; p.z = fz; p.y = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
+        }
+        clinging = false;                                              // otherwise drop (gravity resumes)
+      }
+      if (clinging) p.vy = 0; // hold position while stuck; once detached, gravity takes over
       if (jumpRequested) { clinging = false; p.vy = JUMP_VEL * 0.5; }
     } else {
       // TANK controls: turn to face, then move forward/back along that facing.
