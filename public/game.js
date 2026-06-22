@@ -3,7 +3,14 @@
 // browser fetches it). Home/lobby are plain DOM; the game is a WebGL scene.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js';
+
+// Accelerate raycasts (collision/floor/cling) with a BVH — the per-frame
+// raycasts against high-poly building meshes were the main FPS killer.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 const AVATARS = ['🦎', '🐙', '🐸', '🦊', '🐼', '🐯', '🐧', '🦄', '🐳', '👾', '🤖', '👻'];
 const socket = io();
@@ -135,14 +142,14 @@ function modelUrl(kit, name) {
 // Load a GLB once (by URL), then hand out lightweight clones. `pointFilter`
 // point-samples the texture (for Kenney's tiny palette atlas); leave it off
 // for full-resolution scene textures.
-function loadModelByUrl(url, pointFilter) {
+function loadModelByUrl(url, pointFilter, castShadow = true) {
   if (!modelCache.has(url)) {
     modelCache.set(url, new Promise((resolve, reject) => {
       gltfLoader.load(url, (gltf) => {
         const proto = gltf.scene;
         proto.traverse((o) => {
           if (o.isMesh) {
-            o.castShadow = true;
+            o.castShadow = castShadow;
             o.receiveShadow = true;
             if (pointFilter && o.material && o.material.map) {
               o.material.map.magFilter = THREE.NearestFilter;
@@ -165,7 +172,8 @@ function loadModel(kit, name) { return loadModelByUrl(modelUrl(kit, name), true)
 // its base to the ground.
 async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 30, yOff = 0, solid = false, collide = false } = {}) {
   let proto;
-  try { proto = await loadModelByUrl(encodeURI('/models/' + file), false); } catch (_) { return null; }
+  // Scene GLBs are high-poly + baked-lit, so skip them in the shadow pass (big FPS win).
+  try { proto = await loadModelByUrl(encodeURI('/models/' + file), false, false); } catch (_) { return null; }
   const inst = proto.clone(true);
   inst.rotation.set(rotX, rot, 0);
   inst.updateMatrixWorld(true);
@@ -198,7 +206,10 @@ async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 
   // Per-mesh collision — but glass partitions / doors / curtains are left
   // pass-through so you can move freely between rooms.
   if (collide) inst.traverse((o) => {
-    if (o.isMesh && !PASSTHROUGH.test(o.name)) collisionMeshes.push(o);
+    if (o.isMesh && !PASSTHROUGH.test(o.name)) {
+      try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
+      collisionMeshes.push(o);
+    }
   });
   return inst;
 }
@@ -240,7 +251,7 @@ function mulberry32(seed) {
 }
 
 const cam = { yaw: 0, pitch: 0.4 };       // shared look angles
-const TP = { dist: 4.2, pitchMin: 0.02, pitchMax: 1.25 };  // close, for painting
+const TP = { dist: 0.9, pitchMin: 0.02, pitchMax: 1.25 };  // world distance (zoomable)
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 const MOVE_SPEED = 5.0;                    // seeker (full-size hunter)
 // Hiders are tiny — ~1/6 the size of the seekers and the world's props — so
@@ -251,8 +262,8 @@ const HIDER_MOVE_SPEED = 2.0;              // scaled down so they scurry, not bl
 function initThree() {
   if (threeReady) return;
   const canvas = $('stage');
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // cap for FPS
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -266,7 +277,7 @@ function initThree() {
   sunLight = new THREE.DirectionalLight(0xfff4e0, 1.6);
   sunLight.position.set(18, 30, 14);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.mapSize.set(1024, 1024);
   sunLight.shadow.bias = -0.0004;
   sunLight.shadow.normalBias = 0.04;
   const sc = sunLight.shadow.camera;
@@ -365,6 +376,7 @@ function buildConnector(group, c) {
     new THREE.MeshStandardMaterial({ color: new THREE.Color(c.floor || '#b9b6ad'), roughness: 1 }));
   floor.position.set(mx, -0.05, mz); floor.rotation.y = ang; floor.receiveShadow = true;
   group.add(floor);
+  try { floor.geometry.computeBoundsTree(); } catch (_) {}
   collisionMeshes.push(floor); // counts as walkable floor
 
   const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.wall || '#d9d3c7'), roughness: 1 });
@@ -745,6 +757,7 @@ function resolveCollision(x, z, rad = 0.42) {
 // Per-mesh collision: raycast against the scene geometry so the actor stops
 // flush against walls/objects (and can hug them to hide).
 const _rc = new THREE.Raycaster();
+_rc.firstHitOnly = true; // BVH fast path — we only need the nearest hit
 const _ro = new THREE.Vector3(), _rd = new THREE.Vector3();
 function castDist(x, y, z, dx, dz) {
   _ro.set(x, y, z); _rd.set(dx, 0, dz);
@@ -839,7 +852,7 @@ function applyMovement(dt) {
       if (jumpRequested) { clinging = false; p.vy = JUMP_VEL * 0.5; }
     } else {
       // TANK controls: turn to face, then move forward/back along that facing.
-      if (turn) p.ry += turn * TURN_RATE * dt;
+      if (turn) p.ry -= turn * TURN_RATE * dt;   // A/left turns left (char POV)
       if (fwd) {
         const f = forwardXZ(p.ry);
         let nx = clamp(p.x + f.x * fwd * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
@@ -864,7 +877,7 @@ function applyMovement(dt) {
     const p = seekerPos; p.vy = p.vy || 0;
     const SRAD = 0.4, RAYY = (p.y || 0) + 1.0;
     // First-person tank: A/D turn the view, W/S move along it.
-    if (turn) cam.yaw += turn * TURN_RATE * dt;
+    if (turn) cam.yaw -= turn * TURN_RATE * dt;   // A/left turns view left
     if (fwd) {
       const f = forwardXZ(cam.yaw);
       let nx = clamp(p.x + f.x * fwd * MOVE_SPEED * dt, b.minX, b.maxX);
@@ -918,7 +931,7 @@ function updateCamera() {
   const thirdPerson = (target, s = 1) => {
     cam.pitch = clamp(cam.pitch, TP.pitchMin, TP.pitchMax);
     const f = forwardXZ(cam.yaw);
-    const dist = TP.dist * s;
+    const dist = TP.dist; // a WORLD distance, so you can zoom right out to survey
     const horiz = dist * Math.cos(cam.pitch);
     const lookY = (target.y || 0) + 1.0 * s;
     let cx = target.x - f.x * horiz;
@@ -1060,9 +1073,11 @@ function keyboardVec() {
   const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
   return { x, y };
 }
-// Mouse wheel zooms the prep/paint camera in & out for fine detail.
+// Zoom the third-person camera in/out (paint detail up close, survey from afar).
+function canZoom() { return hiderControls() || iSpectate(); }
+function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.5, 16); }
 $('stage').addEventListener('wheel', (e) => {
-  if (hiderControls()) { TP.dist = clamp(TP.dist - e.deltaY * 0.0015, 1.4, 7); e.preventDefault(); }
+  if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
 }, { passive: false });
 
 // ---- Input: paint / look-drag / tap -------------------------------------
@@ -1085,13 +1100,32 @@ function iSpectate() {
     (snap.phase === 'hunt' || snap.phase === 'roundover');
 }
 
+// Two fingers on the stage = pinch-to-zoom (mobile); one finger = look/paint.
+const pointers = new Map();
+let pinching = false, pinchDist = 0;
 canvas.addEventListener('pointerdown', (e) => {
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) {
+    if (painting) endStroke();
+    lookId = null; painting = false; pinching = true;
+    const [a, b] = [...pointers.values()];
+    pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    return;
+  }
   if (lookId !== null) return;
   lookId = e.pointerId; lookStart = { x: e.clientX, y: e.clientY, t: Date.now() }; moved = 0;
   painting = false;
   if (hiderControls() && paintRaycast(e.clientX, e.clientY)) painting = true;
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinching && pointers.size >= 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (canZoom()) applyZoom((pinchDist - d) * 0.03); // spread = zoom in
+    pinchDist = d;
+    return;
+  }
   if (e.pointerId !== lookId) return;
   if (painting) { paintRaycast(e.clientX, e.clientY); return; }
   const dx = e.movementX || 0, dy = e.movementY || 0;
@@ -1100,12 +1134,18 @@ canvas.addEventListener('pointermove', (e) => {
   cam.pitch -= dy * 0.005;
 });
 canvas.addEventListener('pointerup', (e) => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinching = false;
   if (e.pointerId !== lookId) return;
   if (painting) endStroke();
   else if ((Date.now() - lookStart.t) < 320 && moved < 12) handleTap(e.clientX, e.clientY);
   lookId = null; painting = false;
 });
-canvas.addEventListener('pointercancel', () => { if (painting) endStroke(); lookId = null; painting = false; });
+canvas.addEventListener('pointercancel', (e) => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinching = false;
+  if (painting) endStroke(); lookId = null; painting = false;
+});
 
 function tapNDC(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
@@ -1313,7 +1353,7 @@ function renderGame() {
     myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
                pose: snap.myBody.pose, paint: snap.myBody.paint || null };
     myBodyRound = snap.round;
-    cam.yaw = 0; cam.pitch = 0.45; TP.dist = 4.2; // reset paint-zoom
+    cam.yaw = 0; cam.pitch = 0.45; TP.dist = 0.9; // reset zoom
     removeMyChar();                 // fresh blank doodler (or restored paint)
     $('colorInput').value = brushColor;
     document.querySelectorAll('#hiderTools .brush').forEach((x) =>
