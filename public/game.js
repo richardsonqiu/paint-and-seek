@@ -758,7 +758,7 @@ function resolveCollision(x, z, rad = 0.42) {
 // flush against walls/objects (and can hug them to hide).
 const _rc = new THREE.Raycaster();
 _rc.firstHitOnly = true; // BVH fast path — we only need the nearest hit
-const _ro = new THREE.Vector3(), _rd = new THREE.Vector3();
+const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _nrm = new THREE.Vector3();
 function castDist(x, y, z, dx, dz) {
   _ro.set(x, y, z); _rd.set(dx, 0, dz);
   _rc.set(_ro, _rd); _rc.far = 6;
@@ -782,6 +782,8 @@ function slideMove(px, pz, nx, nz, y, rad) {
 // ---- Jumping & clinging -------------------------------------------------
 const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4, TURN_RATE = 2.6;
 const ROOF = 2.0; // ceiling cap (below wall height) so you can't climb/jump over the walls into the sky
+const CLING_GAP = 0.06;  // how close the doodler sits to the clung surface (flush)
+const CLING_REACH = 0.5; // re-stick range: detach promptly once the surface ends (no flying)
 let jumpRequested = false, clinging = false, nearSurface = false;
 
 function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
@@ -817,22 +819,28 @@ function groundUnder(x, y, z) {
 }
 
 // Is there a clingable surface within reach (facing or joystick direction)?
-// When found, remember the direction toward it (surfaceDir) so cling can climb it.
+// Look for a wall/object the doodler faces; remember the direction straight INTO
+// that surface (along its normal) so cling can snap flush and align to it.
 const surfaceDir = { x: 0, z: 1 };
 const clingDir = { x: 0, z: 1 };
 function detectSurface(p) {
   if (!collisionMeshes.length) return false;
-  const dirs = [[Math.sin(p.ry), Math.cos(p.ry)]];
-  if (joyVec.x || joyVec.y) dirs.push([Math.sin(p.ry), Math.cos(p.ry)]);
-  for (const [dx, dz] of dirs) {
-    _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(dx, 0, dz).normalize();
-    _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
-    if (_rc.intersectObjects(collisionMeshes, true).length) {
-      surfaceDir.x = _rd.x; surfaceDir.z = _rd.z;
-      return true;
+  _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(Math.sin(p.ry), 0, Math.cos(p.ry)).normalize();
+  _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
+  const hit = _rc.intersectObjects(collisionMeshes, true)[0];
+  if (!hit) return false;
+  // Default: head straight along the look ray. If the hit face gives a usable
+  // (near-vertical) normal, head along -normal so we align square to the wall.
+  let nx = _rd.x, nz = _rd.z;
+  if (hit.face) {
+    _nrm.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+    if (Math.hypot(_nrm.x, _nrm.z) > 0.25) { // a wall, not a floor/ceiling
+      const m = Math.hypot(_nrm.x, _nrm.z);
+      nx = -_nrm.x / m; nz = -_nrm.z / m;
     }
   }
-  return false;
+  surfaceDir.x = nx; surfaceDir.z = nz;
+  return true;
 }
 
 function applyMovement(dt) {
@@ -855,14 +863,15 @@ function applyMovement(dt) {
         [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
         p.x = nx; p.z = nz;
       }
-      // Re-stick to the surface; let go (and fall) once it's no longer there —
-      // i.e. you climbed over its top edge or strafed past its side.
-      _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
-      _rc.set(_ro, _rd); _rc.far = 1.3;
+      // Re-stick flush to the surface; let go (and fall) once it's no longer
+      // there — i.e. you climbed over its top edge or strafed past its side.
+      _ro.set(p.x - clingDir.x * 0.3, (p.y || 0) + 0.12, p.z - clingDir.z * 0.3);
+      _rd.set(clingDir.x, 0, clingDir.z).normalize();
+      _rc.set(_ro, _rd); _rc.far = 0.3 + CLING_REACH;
       const sh = _rc.intersectObjects(collisionMeshes, true)[0];
       const gy = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
       if ((p.y || 0) <= gy + 0.05) { p.y = gy; clinging = false; }      // reached the floor
-      else if (sh) { p.x = sh.point.x - clingDir.x * 0.3; p.z = sh.point.z - clingDir.z * 0.3; } // stay glued
+      else if (sh) { p.x = sh.point.x - clingDir.x * CLING_GAP; p.z = sh.point.z - clingDir.z * CLING_GAP; } // stay glued, flush
       else {                                                            // surface ended
         const fx = clamp(p.x + clingDir.x * 0.35, b.minX, b.maxX);
         const fz = clamp(p.z + clingDir.z * 0.35, b.minZ, b.maxZ);
@@ -1052,11 +1061,11 @@ function startCling() {
   if (!nearSurface || !myBody) return;
   clinging = true;
   clingDir.x = surfaceDir.x; clingDir.z = surfaceDir.z;
-  // Snap right up against the surface so climbing stays glued to it.
+  // Snap flush against the surface (no gap) and face square into it.
   _ro.set(myBody.x, (myBody.y || 0) + 0.12, myBody.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
   const h = _rc.intersectObjects(collisionMeshes, true)[0];
-  if (h) { myBody.x = h.point.x - clingDir.x * 0.3; myBody.z = h.point.z - clingDir.z * 0.3; }
+  if (h) { myBody.x = h.point.x - clingDir.x * CLING_GAP; myBody.z = h.point.z - clingDir.z * CLING_GAP; }
   myBody.ry = Math.atan2(clingDir.x, clingDir.z);
 }
 $('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jumpRequested = true; });
