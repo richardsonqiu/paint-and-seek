@@ -251,7 +251,7 @@ function mulberry32(seed) {
 }
 
 const cam = { yaw: 0, pitch: 0.4 };       // shared look angles
-const TP = { dist: 0.9, pitchMin: 0.02, pitchMax: 1.25 };  // world distance (zoomable)
+const TP = { dist: 0.9, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 const MOVE_SPEED = 5.0;                    // seeker (full-size hunter)
 // Hiders are tiny — ~1/6 the size of the seekers and the world's props — so
@@ -781,6 +781,7 @@ function slideMove(px, pz, nx, nz, y, rad) {
 
 // ---- Jumping & clinging -------------------------------------------------
 const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4, TURN_RATE = 2.6;
+const ROOF = 2.0; // ceiling cap (below wall height) so you can't climb/jump over the walls into the sky
 let jumpRequested = false, clinging = false, nearSurface = false;
 
 function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
@@ -840,7 +841,7 @@ function applyMovement(dt) {
     if (clinging) {
       // Attached to a surface: climb up/down and strafe sideways (collision
       // still on, so you don't pass through it). Jump to let go.
-      if (fwd) p.y = clamp((p.y || 0) + fwd * HIDER_MOVE_SPEED * dt, 0, 9);     // climb (capped)
+      if (fwd) p.y = clamp((p.y || 0) + fwd * HIDER_MOVE_SPEED * dt, 0, ROOF);  // climb (capped at the roof)
       if (turn) {
         const r = { x: Math.cos(p.ry), z: -Math.sin(p.ry) };                    // strafe along wall
         let nx = clamp(p.x + r.x * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
@@ -867,6 +868,7 @@ function applyMovement(dt) {
       let ny = (p.y || 0) + p.vy * dt;
       const g = groundUnder(p.x, ny, p.z);
       if (ny <= g) { ny = g; p.vy = 0; }
+      if (ny > ROOF) { ny = ROOF; if (p.vy > 0) p.vy = 0; }
       p.y = ny;
     }
     jumpRequested = false;
@@ -892,6 +894,7 @@ function applyMovement(dt) {
     let ny = (p.y || 0) + p.vy * dt;
     const g = groundUnder(p.x, ny, p.z);
     if (ny <= g) { ny = g; p.vy = 0; }
+    if (ny > ROOF) { ny = ROOF; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
     sendSeek();
   } else if (iSpectate()) {
@@ -933,10 +936,14 @@ function updateCamera() {
     const f = forwardXZ(cam.yaw);
     const dist = TP.dist; // a WORLD distance, so you can zoom right out to survey
     const horiz = dist * Math.cos(cam.pitch);
-    const lookY = (target.y || 0) + 1.0 * s;
     let cx = target.x - f.x * horiz;
-    let cy = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
     let cz = target.z - f.z * horiz;
+    // The camera never drops below the floor; instead, when you drag down past
+    // level the look target rises so you look UP (at the ceiling / up the walls).
+    const cyMin = (target.y || 0) + 0.12;
+    const cyWant = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
+    let cy = Math.max(cyMin, cyWant);
+    const lookY = (target.y || 0) + 1.0 * s + Math.max(0, cyMin - cyWant);
     // Pull the camera in if geometry is between it and the doodler, so it never
     // buries inside a wall/furniture (raycast from the doodler out to the camera).
     if (collisionMeshes.length) {
@@ -1075,7 +1082,7 @@ function keyboardVec() {
 }
 // Zoom the third-person camera in/out (paint detail up close, survey from afar).
 function canZoom() { return hiderControls() || iSpectate(); }
-function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.5, 16); }
+function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.5, 5); } // max keeps you within the room
 $('stage').addEventListener('wheel', (e) => {
   if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
 }, { passive: false });
