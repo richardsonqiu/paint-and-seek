@@ -817,16 +817,28 @@ function groundUnder(x, y, z) {
 }
 
 // Is there a clingable surface within reach (facing or joystick direction)?
+// When found, remember the direction toward it (surfaceDir) so cling can climb it.
+const surfaceDir = { x: 0, z: 1 };
+const clingDir = { x: 0, z: 1 };
 function detectSurface(p) {
   if (!collisionMeshes.length) return false;
   const dirs = [[Math.sin(p.ry), Math.cos(p.ry)]];
-  if (joyVec.x || joyVec.y) dirs.push([joyVec.x, joyVec.y]);
+  if (joyVec.x || joyVec.y) dirs.push([Math.sin(p.ry), Math.cos(p.ry)]);
   for (const [dx, dz] of dirs) {
     _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(dx, 0, dz).normalize();
     _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
-    if (_rc.intersectObjects(collisionMeshes, true).length) return true;
+    if (_rc.intersectObjects(collisionMeshes, true).length) {
+      surfaceDir.x = _rd.x; surfaceDir.z = _rd.z;
+      return true;
+    }
   }
   return false;
+}
+// Is the clung surface still in front at height y? (false once you climb past its top edge)
+function surfaceAlong(p, y) {
+  _ro.set(p.x, (y || 0) + 0.12, p.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
+  _rc.set(_ro, _rd); _rc.far = 1.0;
+  return _rc.intersectObjects(collisionMeshes, true).length > 0;
 }
 
 function applyMovement(dt) {
@@ -839,13 +851,30 @@ function applyMovement(dt) {
     const p = myBody; p.vy = p.vy || 0;
     const HRAD = 0.16, RAYY = (p.y || 0) + 0.12;
     if (clinging) {
-      // Attached to a surface: climb up/down and strafe sideways (collision
-      // still on, so you don't pass through it). Jump to let go.
-      if (fwd) p.y = clamp((p.y || 0) + fwd * HIDER_MOVE_SPEED * dt, 0, ROOF);  // climb (capped at the roof)
-      if (turn) {
-        const r = { x: Math.cos(p.ry), z: -Math.sin(p.ry) };                    // strafe along wall
-        let nx = clamp(p.x + r.x * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + r.z * turn * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+      // Climb the clung surface; strafe sideways along it. Collision stays on.
+      if (fwd > 0) {                                   // climbing up
+        const ny = (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt;
+        if (!surfaceAlong(p, ny)) {
+          // Reached the top edge of what we're clinging to → climb onto it & let go.
+          const fx = clamp(p.x + clingDir.x * 0.3, b.minX, b.maxX);
+          const fz = clamp(p.z + clingDir.z * 0.3, b.minZ, b.maxZ);
+          if (hasFloor(fx, fz, p.y)) {
+            p.x = fx; p.z = fz; p.y = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
+            clinging = false;
+          }
+          // no top to stand on (overhang) → just stop rising
+        } else if (ny <= ROOF) {
+          p.y = ny;                                    // surface still here → keep climbing
+        }
+      } else if (fwd < 0) {                            // climbing down
+        p.y = Math.max(0, (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt);
+        const g = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
+        if ((p.y || 0) <= g + 0.05) { p.y = g; clinging = false; } // reached floor → let go
+      }
+      if (turn) {                                      // strafe perpendicular to the surface
+        const px = -clingDir.z, pz = clingDir.x;
+        let nx = clamp(p.x + px * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + pz * turn * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
         [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
         p.x = nx; p.z = nz;
       }
@@ -1024,11 +1053,23 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+// Start clinging: lock onto the detected surface and face it (so climb/strafe
+// are relative to that surface).
+function startCling() {
+  if (!nearSurface || !myBody) return;
+  clinging = true;
+  clingDir.x = surfaceDir.x; clingDir.z = surfaceDir.z;
+  // Snap right up against the surface so climbing stays glued to it.
+  _ro.set(myBody.x, (myBody.y || 0) + 0.12, myBody.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
+  _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
+  const h = _rc.intersectObjects(collisionMeshes, true)[0];
+  if (h) { myBody.x = h.point.x - clingDir.x * 0.3; myBody.z = h.point.z - clingDir.z * 0.3; }
+  myBody.ry = Math.atan2(clingDir.x, clingDir.z);
+}
 $('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jumpRequested = true; });
 $('clingBtn').addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (clinging) clinging = false;
-  else if (nearSurface) clinging = true;
+  if (clinging) clinging = false; else startCling();
 });
 
 // ---- Input: joystick ----------------------------------------------------
@@ -1068,7 +1109,7 @@ window.addEventListener('keydown', (e) => {
   if (document.getElementById('screen-game') && !document.getElementById('screen-game').classList.contains('active')) return;
   keyState[k] = true;
   if (k === ' ') { jumpRequested = true; e.preventDefault(); }
-  if (k === 'e') { if (clinging) clinging = false; else if (nearSurface) clinging = true; }
+  if (k === 'e') { if (clinging) clinging = false; else startCling(); }
 });
 window.addEventListener('keyup', (e) => { keyState[e.key.toLowerCase()] = false; });
 function keyboardVec() {
