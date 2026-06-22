@@ -216,6 +216,11 @@ input:focus, select:focus { outline: none; border-color: var(--accent2); }
 /* Seeker reload state on the crosshair */
 .crosshair.reloading { color: var(--accent); opacity: .5; }
 
+/* Spectator minimap */
+.minimap { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 56px); left: 10px; z-index: 6;
+  width: 150px; height: 150px; border-radius: 12px; background: rgba(10,6,18,.55);
+  border: 1px solid rgba(255,255,255,.18); }
+
 .seeker-hint { margin: 0; padding: 6px 10px; font-size: 13px; color: var(--muted); text-align: center; }
 
 /* Emotes: top-right column, so the bottom-right is free for the action buttons. */

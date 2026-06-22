@@ -168,7 +168,7 @@ io.on('connection', (socket) => {
     if (typeof body.y === 'number') p.body.y = Math.max(-2, Math.min(20, body.y));
     if (typeof body.ry === 'number') p.body.ry = body.ry;
     if (POSES.includes(body.pose)) p.body.pose = body.pose;
-    if (r.phase === 'prep' && typeof body.paint === 'string' &&
+    if (typeof body.paint === 'string' &&          // paint during prep AND the hunt
         body.paint.startsWith('data:image/') &&
         body.paint.length <= MAX_PAINT_BYTES) {
       p.body.paint = body.paint;
@@ -239,6 +239,20 @@ io.on('connection', (socket) => {
       broadcast(r);
       maybeEndEarly(r);
     }
+  });
+
+  // Seeker reports its position (for spectators' minimaps). Privacy is handled
+  // in snapshot() — only caught spectators get the seeker dot.
+  socket.on('seekmove', ({ x, z, ry }) => {
+    const r = room();
+    const p = me();
+    if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt') return;
+    if (typeof x === 'number' && typeof z === 'number') {
+      const [cx, cz] = clampToRoom(r.map, x, z);
+      p.body.x = cx; p.body.z = cz;
+    }
+    if (typeof ry === 'number') p.body.ry = ry;
+    broadcast(r);
   });
 
   socket.on('emote', ({ emoji }) => {

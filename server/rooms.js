@@ -138,6 +138,16 @@ export class Room {
       }
     }
     const map = this.map;
+    // Minimap dots: only revealed to a CAUGHT spectator (or at round end), so
+    // active hiders can't peek at where the seeker is.
+    const spectating = !!(me && me.role === 'hider' && me.found) || this.phase === 'roundover';
+    let dots = [];
+    if (spectating && this.phase !== 'lobby') {
+      dots = this.activePlayers().map((p) => ({
+        x: p.body.x, z: p.body.z, role: p.role, found: !!p.found,
+        name: p.name, mine: p.id === forId,
+      }));
+    }
     return {
       code: this.code,
       hostId: this.hostId,
@@ -153,6 +163,8 @@ export class Room {
       myId: forId,
       myBody: me ? me.body : null, // both roles get a server-assigned spawn
       bodies,
+      spectating,
+      dots,
       remaining: this.remainingHiders().length,
       totalHiders: this.hiders().length,
       players: this.activePlayers().map((p) => ({

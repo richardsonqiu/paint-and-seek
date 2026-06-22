@@ -116,6 +116,9 @@ let renderer, scene, camera, raycaster, clock, sunLight;
 let roomGroup = null, builtMapId = null;
 let collisionBoxes = [];            // solid AABBs for wall/landmark collision (Kenney maps)
 let collisionMeshes = [];           // meshes raycast for collision (scene GLBs)
+// Mesh names that should NOT block movement (glass doors/partitions, curtains,
+// mirrors, windows) — so the doodler can move freely between rooms.
+const PASSTHROUGH = /glass|vidro|cortina|curtain|espelho|mirror|janela|window/i;
 const charGroups = new Map();       // hider id -> Group (hunt phase)
 let myChar = null;                  // hider's own Group (prep)
 let threeReady = false;
@@ -192,7 +195,11 @@ async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 
     collisionBoxes.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z });
   }
   // Per-mesh collision: walk into walls/objects and stick against them.
-  if (collide) inst.traverse((o) => { if (o.isMesh) collisionMeshes.push(o); });
+  // Per-mesh collision — but glass partitions / doors / curtains are left
+  // pass-through so you can move freely between rooms.
+  if (collide) inst.traverse((o) => {
+    if (o.isMesh && !PASSTHROUGH.test(o.name)) collisionMeshes.push(o);
+  });
   return inst;
 }
 
@@ -495,28 +502,34 @@ function remapUV(geo, region) {
   uv.needsUpdate = true;
 }
 
+// A little flattened-oval foot (rounded, not a box).
+function roundedFoot() { const g = new THREE.SphereGeometry(0.15, 16, 12); g.scale(1, 0.5, 1.45); return g; }
+
 let humanoidGeos = null;
 function buildHumanoidGeos() {
   if (humanoidGeos) return humanoidGeos;
   const mk = (geo, region) => { remapUV(geo, REGIONS[region]); return geo; };
+  // Chunky, smooth, rounded proportions (à la the "Hidden in Plain Sight" toy):
+  // big round head, fat barrel torso, thick rounded limbs that overlap so the
+  // joints blend, little oval feet. High segment counts keep it smooth.
   humanoidGeos = {
-    head:  { geo: mk(new THREE.SphereGeometry(0.32, 22, 16), 'head'),    pos: [0, 1.55, 0] },
-    torso: { geo: mk(new THREE.CapsuleGeometry(0.30, 0.50, 6, 16), 'torso'), pos: [0, 0.95, 0] },
-    armL:  { geo: mk(new THREE.CapsuleGeometry(0.10, 0.55, 4, 10), 'armL'), pos: [-0.42, 0.98, 0] },
-    armR:  { geo: mk(new THREE.CapsuleGeometry(0.10, 0.55, 4, 10), 'armR'), pos: [0.42, 0.98, 0] },
-    handL: { geo: mk(new THREE.SphereGeometry(0.13, 12, 10), 'handL'),   pos: [-0.42, 0.56, 0] },
-    handR: { geo: mk(new THREE.SphereGeometry(0.13, 12, 10), 'handR'),   pos: [0.42, 0.56, 0] },
-    legL:  { geo: mk(new THREE.CapsuleGeometry(0.14, 0.45, 4, 10), 'legL'), pos: [-0.16, 0.42, 0] },
-    legR:  { geo: mk(new THREE.CapsuleGeometry(0.14, 0.45, 4, 10), 'legR'), pos: [0.16, 0.42, 0] },
-    footL: { geo: mk(new THREE.BoxGeometry(0.20, 0.13, 0.36), 'footL'),  pos: [-0.16, 0.065, 0.07] },
-    footR: { geo: mk(new THREE.BoxGeometry(0.20, 0.13, 0.36), 'footR'),  pos: [0.16, 0.065, 0.07] },
+    head:  { geo: mk(new THREE.SphereGeometry(0.37, 30, 22), 'head') },
+    torso: { geo: mk(new THREE.CapsuleGeometry(0.34, 0.46, 10, 28), 'torso') },
+    armL:  { geo: mk(new THREE.CapsuleGeometry(0.13, 0.46, 8, 18), 'armL') },
+    armR:  { geo: mk(new THREE.CapsuleGeometry(0.13, 0.46, 8, 18), 'armR') },
+    handL: { geo: mk(new THREE.SphereGeometry(0.135, 16, 14), 'handL') },
+    handR: { geo: mk(new THREE.SphereGeometry(0.135, 16, 14), 'handR') },
+    legL:  { geo: mk(new THREE.CapsuleGeometry(0.165, 0.34, 8, 18), 'legL') },
+    legR:  { geo: mk(new THREE.CapsuleGeometry(0.165, 0.34, 8, 18), 'legR') },
+    footL: { geo: mk(roundedFoot(), 'footL') },
+    footR: { geo: mk(roundedFoot(), 'footR') },
   };
   return humanoidGeos;
 }
 
 // Joint pivot heights (local, before HIDER_SCALE).
 const HIP_Y = 0.6;       // waist / hip pivot
-const SHO_Y = 1.25;      // shoulder pivot
+const SHO_Y = 1.2;       // shoulder pivot
 
 // Build a doodler as a small rig: a waist-pivoted upper body (with shoulder
 // pivots for the arms) and hip-pivoted legs, so postures can bend at the
@@ -540,20 +553,20 @@ function buildCharacter(paintUrl) {
   };
   const pivot = (x, y, z = 0) => { const p = new THREE.Group(); p.position.set(x, y, z); return p; };
 
-  // Upper body rotates at the waist.
+  // Upper body rotates at the waist. Parts overlap so the joints blend smoothly.
   const upper = pivot(0, HIP_Y, 0);
-  upper.add(mesh('torso', 0, 0.95 - HIP_Y), mesh('head', 0, 1.55 - HIP_Y));
-  const armL = pivot(-0.42, SHO_Y - HIP_Y, 0);
-  armL.add(mesh('armL', 0, 0.98 - SHO_Y), mesh('handL', 0, 0.56 - SHO_Y));
-  const armR = pivot(0.42, SHO_Y - HIP_Y, 0);
-  armR.add(mesh('armR', 0, 0.98 - SHO_Y), mesh('handR', 0, 0.56 - SHO_Y));
+  upper.add(mesh('torso', 0, 0.92 - HIP_Y), mesh('head', 0, 1.55 - HIP_Y));
+  const armL = pivot(-0.40, SHO_Y - HIP_Y, 0);
+  armL.add(mesh('armL', 0, 0.90 - SHO_Y), mesh('handL', 0, 0.56 - SHO_Y));
+  const armR = pivot(0.40, SHO_Y - HIP_Y, 0);
+  armR.add(mesh('armR', 0, 0.90 - SHO_Y), mesh('handR', 0, 0.56 - SHO_Y));
   upper.add(armL, armR);
 
   // Legs rotate at the hips.
-  const legL = pivot(-0.16, HIP_Y, 0);
-  legL.add(mesh('legL', 0, 0.42 - HIP_Y), mesh('footL', 0, 0.065 - HIP_Y, 0.07));
-  const legR = pivot(0.16, HIP_Y, 0);
-  legR.add(mesh('legR', 0, 0.42 - HIP_Y), mesh('footR', 0, 0.065 - HIP_Y, 0.07));
+  const legL = pivot(-0.15, HIP_Y, 0);
+  legL.add(mesh('legL', 0, 0.40 - HIP_Y), mesh('footL', 0, 0.05 - HIP_Y, 0.06));
+  const legR = pivot(0.15, HIP_Y, 0);
+  legR.add(mesh('legR', 0, 0.40 - HIP_Y), mesh('footR', 0, 0.05 - HIP_Y, 0.06));
 
   grp.add(upper, legL, legR);
   grp.userData = { canvas, ctx, texture, material, paintUrl: null, joints: { upper, armL, armR, legL, legR } };
@@ -867,9 +880,34 @@ function applyMovement(dt) {
     const g = groundUnder(p.x, ny, p.z);
     if (ny <= g) { ny = g; p.vy = 0; }
     p.y = ny;
+    sendSeek();
+  } else if (iSpectate()) {
+    // Caught: roam freely as a spectator (tank controls, on the floor).
+    const p = myBody;
+    if (turn) p.ry += turn * TURN_RATE * dt;
+    if (fwd) {
+      const f = forwardXZ(p.ry);
+      let nx = clamp(p.x + f.x * fwd * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + f.z * fwd * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.16);
+      if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; }
+    }
+    depenetrate(p, (p.y || 0) + 0.12, 0.16);
+    if (turn || fwd) cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 8);
+    p.y = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
+    jumpRequested = false;
   } else {
     jumpRequested = false;
   }
+}
+
+// Seeker tells the server its position (so spectators' minimaps update).
+let lastSeekSent = 0;
+function sendSeek() {
+  const now = Date.now();
+  if (now - lastSeekSent < 120) return;
+  lastSeekSent = now;
+  socket.emit('seekmove', { x: seekerPos.x, z: seekerPos.z, ry: cam.yaw });
 }
 
 function updateCamera() {
@@ -913,7 +951,7 @@ function updateCamera() {
     camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
   };
 
-  if (hiderControls()) thirdPerson(myBody, HIDER_SCALE);
+  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE);
   else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) firstPerson(seekerPos);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
@@ -1041,12 +1079,17 @@ function hiderControls() {
   return snap && snap.myRole === 'hider' && myBody && !iAmFound() &&
     (snap.phase === 'prep' || snap.phase === 'hunt');
 }
+// A caught hider becomes a free-roaming spectator (can't be tagged again).
+function iSpectate() {
+  return snap && snap.myRole === 'hider' && iAmFound() && myBody &&
+    (snap.phase === 'hunt' || snap.phase === 'roundover');
+}
 
 canvas.addEventListener('pointerdown', (e) => {
   if (lookId !== null) return;
   lookId = e.pointerId; lookStart = { x: e.clientX, y: e.clientY, t: Date.now() }; moved = 0;
   painting = false;
-  if (isHiderPrep() && paintRaycast(e.clientX, e.clientY)) painting = true;
+  if (hiderControls() && paintRaycast(e.clientX, e.clientY)) painting = true;
 });
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerId !== lookId) return;
@@ -1072,7 +1115,7 @@ function tapNDC(clientX, clientY) {
 function handleTap(clientX, clientY) {
   if (!snap) return;
 
-  if (isHiderPrep()) {
+  if (hiderControls()) {
     // Eyedropper: sample the exact pixel colour under the tap and load it into
     // the brush. Reading the rendered image (with lighting + fog) gives the
     // colour the surface actually shows on screen — the best camouflage match.
@@ -1292,13 +1335,17 @@ function renderGame() {
 
   // Controls visibility
   const canMove = hiderControls();           // hider, prep or hunt, not caught
-  const isHiderPrep = phase === 'prep' && role === 'hider';
+  const spectating = iSpectate();
   const isSeekerHunt = phase === 'hunt' && role === 'seeker';
-  $('hiderTools').classList.toggle('hidden', !isHiderPrep); // painting: prep only
+  $('hiderTools').classList.toggle('hidden', !canMove); // paint during prep AND the hunt
   $('seekerTools').classList.toggle('hidden', !isSeekerHunt);
-  $('joystick').classList.toggle('hidden', !(canMove || isSeekerHunt));
+  $('joystick').classList.toggle('hidden', !(canMove || isSeekerHunt || spectating));
   $('crosshair').classList.toggle('hidden', !isSeekerHunt);
   $('emoteBar').classList.toggle('hidden', phase !== 'hunt');
+
+  // Spectator minimap (you can roam + see everyone once caught).
+  $('minimap').classList.toggle('hidden', !snap.spectating);
+  if (snap.spectating) drawMinimap();
 
   // Overlays
   const wait = $('waitOverlay');
@@ -1317,6 +1364,28 @@ let _huntToast = -1;
 function toastHuntOnce() {
   if (_huntToast === snap.round) return; _huntToast = snap.round;
   toast('🏃 Hunt on — keep moving and stay hidden!', 2600);
+}
+
+// Top-down minimap for spectators: every player as a labelled dot.
+function drawMinimap() {
+  const cv = $('minimap'); const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const map = MAPS[snap.mapId];
+  const b = (map && map.bounds) || { minX: -30, maxX: 30, minZ: -30, maxZ: 30 };
+  const wWorld = b.maxX - b.minX, dWorld = b.maxZ - b.minZ;
+  const s = Math.min((W - 14) / wWorld, (H - 14) / dWorld);
+  const ox = (W - wWorld * s) / 2, oy = (H - dWorld * s) / 2;
+  for (const d of (snap.dots || [])) {
+    const px = ox + (d.x - b.minX) * s, py = oy + (d.z - b.minZ) * s;
+    let color = d.role === 'seeker' ? '#ff4d4d' : (d.found ? '#9aa' : '#ffffff');
+    if (d.mine) color = '#4dd2ff';
+    ctx.beginPath(); ctx.arc(px, py, d.role === 'seeker' ? 5 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    if (d.role === 'seeker') { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke(); }
+    ctx.font = '9px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.fillText((d.name || '').slice(0, 8), px + 6, py + 3);
+  }
 }
 
 function renderScores() {
