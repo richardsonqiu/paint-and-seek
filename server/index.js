@@ -1,4 +1,4 @@
-// Doodle Guys — game server.
+// Doodler Guys — game server.
 // Express serves the static client; Socket.io drives real-time rooms.
 
 import express from 'express';
@@ -356,5 +356,5 @@ function clamp(n, lo, hi) {
 }
 
 httpServer.listen(PORT, () => {
-  console.log(`Doodle Guys running at http://localhost:${PORT}`);
+  console.log(`Doodler Guys running at http://localhost:${PORT}`);
 });

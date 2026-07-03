@@ -1,11 +1,11 @@
-# Fly.io config for Doodle Guys.
+# Fly.io config for Doodler Guys.
 # First time:  fly launch --copy-config --no-deploy   (reuses this file)
 # Then:        fly deploy
 #
 # `fly launch` will pick a globally-unique app name and a region for you;
 # adjust `app` and `primary_region` below if you want to set them yourself.
 
-app = "doodle-guys"
+app = "doodler-guys"
 primary_region = "sin"   # Singapore. Change to one near your players (e.g. iad, lhr, syd).
 
 [build]

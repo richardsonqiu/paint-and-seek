@@ -1,4 +1,4 @@
-# Product Requirements Document — **Meccha Doodlers**
+# Product Requirements Document — **Doodler Guys**
 
 > *Blend in. Don't get caught.*
 >
@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-Meccha Doodlers splits players into **Hiders** (white chameleon mannequins) and a minority of **Seekers**. Hiders freehand-paint their own bodies with colours eyedropped from the environment, pick a silhouette-breaking pose, and freeze. Seekers hunt in first-person with a paint gun — but **every missed shot costs paint**, and running dry eliminates the seeker. Runs entirely in the browser — no download — with mobile-first touch controls and room-code joining.
+Doodler Guys splits players into **Hiders** (white chameleon mannequins) and a minority of **Seekers**. Hiders freehand-paint their own bodies with colours eyedropped from the environment, pick a silhouette-breaking pose, and freeze. Seekers hunt in first-person with a paint gun — but **every missed shot costs paint**, and running dry eliminates the seeker. Runs entirely in the browser — no download — with mobile-first touch controls and room-code joining.
 
 ## 2. Fidelity pillars (what makes it feel like Meccha Chameleon)
 

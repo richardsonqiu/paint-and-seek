@@ -1,7 +1,7 @@
 {
-  "name": "doodle-guys",
+  "name": "doodler-guys",
   "version": "0.1.0",
-  "description": "Doodle Guys — a browser-based, mobile-first multiplayer paint-and-seek party game.",
+  "description": "Doodler Guys — a browser-based, mobile-first multiplayer paint-and-seek party game.",
   "type": "module",
   "main": "server/index.js",
   "scripts": {

@@ -248,29 +248,37 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .dock-btn.open { background: #ffe9c7; border-color: var(--accent); }
 .dock-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(58,44,26,.28); }
 
-/* Slide-up sheets (paint / pose) above the dock */
-.sheet {
+/* Slim tool strips (paint / pose) above the dock: ONE thumb-height row,
+   translucent, horizontally scrollable — quick to reach, easy to see past. */
+.toolstrip {
   position: absolute; left: 50%; transform: translateX(-50%);
   bottom: calc(82px + var(--safe-b)); z-index: 7;
-  width: min(420px, calc(100% - 16px));
-  background: var(--card); border: var(--border); border-radius: 18px;
-  padding: 12px; box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: 10px; align-items: center;
+  max-width: calc(100% - 12px);
+  background: rgba(255, 253, 243, .92); border: var(--border); border-radius: 16px;
+  padding: 7px 9px; box-shadow: var(--shadow);
+  display: flex; gap: 7px; align-items: center;
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
   animation: sheetUp .18s ease-out;
 }
+.toolstrip::-webkit-scrollbar { display: none; }
+
+/* Paint mode is for painting: tuck the movement controls away so the strip
+   and your body get the whole screen. Closing the strip brings them back. */
+body.paint-mode .joystick, body.paint-mode .action-btn.jump,
+body.paint-mode .action-btn.cling, body.paint-mode .action-btn.blend,
+body.paint-mode .whistle-meter { display: none !important; }
 @keyframes sheetUp { from { transform: translate(-50%, 14px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-.sheet-row { display: flex; gap: 10px; align-items: center; justify-content: center; }
 .tool-hint { margin: 0; font-size: 11.5px; color: var(--muted); text-align: center; font-weight: 700; }
 
-/* Pose grid: big labelled buttons */
-.pose-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; }
+/* Pose buttons: compact labelled squares in the strip */
 .pose {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-  background: var(--card2); border: 2.5px solid #d8cfae; border-radius: 14px;
-  min-height: 60px; cursor: pointer; font-family: var(--font); color: var(--ink);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  background: var(--card2); border: 2.5px solid #d8cfae; border-radius: 12px;
+  min-width: 54px; height: 52px; cursor: pointer; font-family: var(--font); color: var(--ink);
+  flex: 0 0 auto;
 }
-.pose .ic { font-size: 22px; }
-.pose .lbl { font-size: 11px; font-weight: 800; }
+.pose .ic { font-size: 19px; line-height: 1.15; }
+.pose .lbl { font-size: 9.5px; font-weight: 800; }
 .pose.active { border-color: var(--accent); background: #ffe9c7; }
 .tool {
   display: flex; align-items: center; justify-content: center;
@@ -291,9 +299,11 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .brush .dot.m { width: 12px; height: 12px; }
 .brush .dot.l { width: 20px; height: 20px; }
 
-/* Colour palette swatches — big enough for thumbs */
-.palette { display: grid; grid-template-columns: repeat(6, 38px); gap: 7px; }
-.swatch { width: 38px; height: 38px; border-radius: 11px; border: 2.5px solid rgba(58,44,26,.35); cursor: pointer; padding: 0; }
+/* Colour palette swatches — a single thumb row inside the strip */
+.palette { display: flex; gap: 6px; flex: 0 0 auto; }
+.palette.recent:not(:empty) { padding-right: 7px; border-right: 2px solid #e4dcbc; }
+.palette.recent .swatch { border-radius: 50%; }  /* eyedropped colours look like drops */
+.swatch { width: 34px; height: 34px; border-radius: 10px; border: 2.5px solid rgba(58,44,26,.35); cursor: pointer; padding: 0; flex: 0 0 auto; }
 .swatch.active { border-color: #3a2c1a; transform: scale(1.12); }
 
 /* Seeker paint-gun health (misses cost paint!) */
@@ -357,6 +367,29 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   box-shadow: inset 0 0 120px 40px rgba(255, 82, 82, .75); animation: vig .8s ease-out forwards; }
 @keyframes vig { from { opacity: 1; } to { opacity: 0; } }
 
+/* Rotate-your-phone blocker: shows over the GAME screen in portrait only.
+   (Home & lobby are fine in portrait — menus read better tall.) */
+.rotate-overlay { display: none; }
+@media (orientation: portrait) {
+  body.in-game .rotate-overlay {
+    display: flex; position: fixed; inset: 0; z-index: 100;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(44, 74, 18, .93); backdrop-filter: blur(6px);
+    padding: 24px; cursor: pointer;
+  }
+}
+.rotate-inner h2 {
+  color: #fffdf3; font-size: 26px; margin: 10px 0 6px;
+  text-shadow: 0 3px 0 #3a2c1a, -1.5px -1.5px 0 #3a2c1a, 1.5px -1.5px 0 #3a2c1a, -1.5px 1.5px 0 #3a2c1a, 1.5px 1.5px 0 #3a2c1a;
+}
+.rotate-inner p { color: #e9f5d3; font-weight: 700; margin: 0; font-size: 15px; }
+.rotate-phone { font-size: 64px; animation: rotatePhone 1.6s ease-in-out infinite; }
+@keyframes rotatePhone {
+  0%, 20% { transform: rotate(0deg); }
+  55%, 80% { transform: rotate(90deg); }
+  100% { transform: rotate(90deg); }
+}
+
 .toast {
   position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%);
   background: var(--card); color: var(--ink); border: var(--border);
@@ -391,4 +424,62 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   .screen { max-width: 480px; margin: 0 auto; width: 100%; }
   /* The 3D game is always full-bleed (esp. for landscape phone play). */
   #screen-game { max-width: none; }
+}
+
+/* ---- Landscape menus: a proper game frontend, not a scrolling page. ------
+   Hero and card sit side by side, everything compact enough to fit the
+   viewport height with NO page scroll (long lists scroll inside their card). */
+@media (orientation: landscape) {
+  .screen { overflow: hidden; }
+
+  /* HOME: logo left, join card right */
+  #screen-home {
+    flex-direction: row; align-items: center; justify-content: center;
+    gap: clamp(20px, 5vw, 64px); max-width: none; padding: 10px 24px;
+  }
+  #screen-home .hero { margin-top: 0; flex: 0 1 auto; }
+  .hero-mascot { font-size: clamp(34px, 7vh, 56px); }
+  .logo { font-size: clamp(28px, 9vh, 58px); }
+  .tag { font-size: clamp(12px, 2.6vh, 16px); margin-top: 6px; }
+  #screen-home .card {
+    flex: 0 1 470px; max-height: calc(100vh - 20px); overflow-y: auto;
+    padding: 12px 16px;
+  }
+  #screen-home .footnote { display: none; }
+  #screen-home .field { margin-bottom: 8px; }
+  #screen-home input, #screen-home select { padding: 8px 12px; }
+  #screen-home .avatar-picker button { width: 40px; height: 40px; font-size: 19px; border-radius: 11px; }
+  #screen-home .btn.big { padding: 10px; font-size: 16px; }
+  #screen-home .divider { margin: 8px 0; }
+  #screen-home .error { min-height: 0; margin: 4px 0 0; }
+
+  /* Short phone landscape: squeeze the join card so it all fits, no scroll */
+  @media (max-height: 430px) {
+    #screen-home .card { padding: 8px 12px; }
+    #screen-home .field > span { font-size: 11px; }
+    #screen-home input, #screen-home select { padding: 5px 10px; border-radius: 10px; }
+    #screen-home .field { margin-bottom: 5px; gap: 3px; }
+    #screen-home .avatar-picker { gap: 5px; }
+    #screen-home .avatar-picker button { width: 34px; height: 34px; font-size: 16px; }
+    #screen-home .btn.big { padding: 7px; font-size: 15px; border-radius: 12px; }
+    #screen-home .divider { margin: 5px 0; font-size: 11px; }
+    #screen-home .code-input { font-size: 16px; letter-spacing: 4px; }
+  }
+
+  /* LOBBY: top bar spans, players & settings side by side, start below */
+  #screen-lobby {
+    flex-direction: row; flex-wrap: wrap; align-content: flex-start;
+    justify-content: center; gap: 10px; max-width: none; padding: 10px 20px;
+  }
+  #screen-lobby .bar { flex: 1 1 100%; }
+  #screen-lobby .card {
+    flex: 1 1 320px; max-width: 460px; align-self: flex-start;
+    max-height: calc(100vh - 150px); overflow-y: auto; padding: 12px 14px;
+  }
+  #screen-lobby .card h2 { font-size: 16px; margin-bottom: 8px; }
+  #screen-lobby .field { margin-bottom: 8px; }
+  #screen-lobby input, #screen-lobby select { padding: 7px 10px; }
+  #screen-lobby .player-list li { padding: 7px 10px; }
+  #screen-lobby #startBtn { flex: 1 1 100%; max-width: 420px; margin: 0 auto; padding: 11px; font-size: 16px; }
+  #screen-lobby .footnote { flex: 1 1 100%; margin: 0; }
 }

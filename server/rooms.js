@@ -1,4 +1,4 @@
-// Room + game-state management for Doodle Guys (3D).
+// Room + game-state management for Doodler Guys (3D).
 // Server is authoritative for: role assignment, phase transitions, tag
 // validation, and scoring. Movement/painting during prep is client-driven
 // and broadcast. Tagging is by target id — the seeker's client raycasts the

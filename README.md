@@ -1,4 +1,4 @@
-# 🦎 Meccha Doodlers
+# 🦎 Doodler Guys
 
 **Blend in. Don't get caught.**
 

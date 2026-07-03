@@ -1,4 +1,4 @@
-// Meccha Doodlers — 3D client (Three.js).
+// Doodler Guys — 3D client (Three.js).
 // A camouflage hide-and-seek party game à la Meccha Chameleon: hiders are
 // little chameleons that paint/blend themselves into the scenery; the seeker
 // hunts them down with a paint gun. Home/lobby are plain DOM; the game is a
@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=6';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -22,10 +22,11 @@ const $ = (id) => document.getElementById(id);
 let myId = null, snap = null, serverSkew = 0, inRoom = false;
 let chosenAvatar = AVATARS[0];
 
-// Brush state for free-form painting.
+// Brush state for free-form painting. Generous sizes — fat, forgiving
+// strokes make painting on a phone screen easy (à la Meccha Chameleon).
 let brushColor = '#3bd16a';
 let brushSize = 'm';                 // 's' | 'm' | 'l'
-const BRUSH_PX = { s: 5, m: 12, l: 26 };
+const BRUSH_PX = { s: 7, m: 16, l: 32 };
 
 // Hider working body (local, smooth); seeker first-person position.
 let myBody = null, myBodyRound = -1;
@@ -36,7 +37,27 @@ let lastMoveSent = 0, lastTexSent = 0, paintDirtyForSync = false;
 function show(screen) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   $(`screen-${screen}`).classList.add('active');
+  // The 3D game is landscape-only on phones (portrait is too narrow to spot
+  // anything); menus are fine either way.
+  document.body.classList.toggle('in-game', screen === 'game');
+  if (screen === 'game') tryLandscapeLock();
 }
+
+// Best effort: fullscreen + rotate to landscape (works on Android Chrome from
+// a user gesture; iOS Safari doesn't allow locking, so the rotate overlay
+// stays up there until the phone is physically turned).
+async function tryLandscapeLock() {
+  try {
+    if (!matchMedia('(orientation: portrait)').matches) return;
+    if (document.fullscreenElement == null && document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock('landscape');
+    }
+  } catch (_) { /* not allowed here — the overlay asks the player to rotate */ }
+}
+$('rotateOverlay').addEventListener('click', tryLandscapeLock);
 function toast(msg, ms = 1800) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
@@ -129,7 +150,7 @@ $('startBtn').onclick = () => socket.emit('start');
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
   try {
-    if (navigator.share) await navigator.share({ title: 'Meccha Doodlers', text: `Join my game! Code: ${snap.code}`, url });
+    if (navigator.share) await navigator.share({ title: 'Doodler Guys', text: `Join my game! Code: ${snap.code}`, url });
     else { await navigator.clipboard.writeText(url); toast('Link copied!'); }
   } catch (_) {}
 };
@@ -178,7 +199,9 @@ let collisionMeshes = [];           // meshes raycast for collision (scene GLBs)
 // mirrors, windows, doors) — so players can move freely between rooms. Door
 // meshes are also hidden entirely: a closed door would seal off a room.
 const PASSTHROUGH = /glass|vidro|cortina|curtain|espelho|mirror|janela|window|door|porta\b/i;
-const REMOVE = /\bdoor|\bporta\b/i;   // closed doors: remove from the scene
+// Closed doors seal rooms; ceilings ("teto") make interiors dark and hide the
+// action — both are removed, giving every map the bright doll-house look.
+const REMOVE = /\bdoor|\bporta\b|teto|ceiling/i;
 const charGroups = new Map();       // hider id -> Group (hunt phase)
 let myChar = null;                  // hider's own Group (prep)
 let threeReady = false;
@@ -326,12 +349,13 @@ function mulberry32(seed) {
 }
 
 const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
-const TP = { dist: 1.6, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
+const TP = { dist: 1.1, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 const MOVE_SPEED = 5.4;                    // seeker (full-size hunter)
-// Hiders are smaller than the seeker so they can tuck behind the scenery —
-// but big enough that a painted one is still spottable (~0.7m tall).
-const HIDER_SCALE = 0.38;
+// Hiders are tiny figurine-sized mannequins (~0.45m tall) so they can really
+// tuck in among the scenery — the headroom rule still keeps them out of
+// unspottable under-furniture gaps.
+const HIDER_SCALE = 0.24;
 const HIDER_MOVE_SPEED = 3.3;
 
 function initThree() {
@@ -600,25 +624,25 @@ let charGeos = null;
 function buildCharGeos() {
   if (charGeos) return charGeos;
   const mk = (geo, region) => remapUV(geo, REGIONS[region]);
-  // Smooth, blobby, featureless proportions — like the 3D-printed Meccha
-  // Chameleon figures: a big round head melting straight into a fat torso
-  // (no neck), thick rounded limbs with no separate hands or feet.
-  const head = new THREE.SphereGeometry(0.40, 32, 24);
-  head.scale(0.96, 1.04, 0.96);
+  // Proportions matched to the figure set: an oversized round head sunk
+  // straight into a chunky torso (no neck at all), short tube arms and
+  // stubby little legs — roughly 1/3 head, 1/2 body, stub legs.
+  const head = new THREE.SphereGeometry(0.43, 32, 24);
+  head.scale(0.98, 1.03, 0.98);
   charGeos = {
     head:  mk(head, 'head'),
-    torso: mk(new THREE.CapsuleGeometry(0.37, 0.52, 12, 30), 'torso'),
-    armL:  mk(new THREE.CapsuleGeometry(0.14, 0.5, 8, 20), 'armL'),
-    armR:  mk(new THREE.CapsuleGeometry(0.14, 0.5, 8, 20), 'armR'),
-    legL:  mk(new THREE.CapsuleGeometry(0.175, 0.4, 8, 20), 'legL'),
-    legR:  mk(new THREE.CapsuleGeometry(0.175, 0.4, 8, 20), 'legR'),
+    torso: mk(new THREE.CapsuleGeometry(0.40, 0.44, 12, 30), 'torso'),
+    armL:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armL'),
+    armR:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armR'),
+    legL:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legL'),
+    legR:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legR'),
   };
   return charGeos;
 }
 
 // Joint pivot heights (local, before HIDER_SCALE).
-const HIP_Y = 0.62;      // waist / hip pivot
-const SHO_Y = 1.22;      // shoulder pivot
+const HIP_Y = 0.48;      // waist / hip pivot
+const SHO_Y = 1.02;      // shoulder pivot
 
 // Build the mannequin as a small rig: a waist-pivoted upper body (with
 // shoulder pivots for the arms) and hip-pivoted legs, so poses can bend at
@@ -646,19 +670,19 @@ function buildCharacter(paintUrl) {
   // Upper body rotates at the waist. The head sits straight on the torso —
   // overlapping spheres blend into one smooth silhouette.
   const upper = pivot(0, HIP_Y, 0);
-  upper.add(mesh(G.torso, 0, 0.95 - HIP_Y));
-  upper.add(mesh(G.head, 0, 1.5 - HIP_Y));
-  const armL = pivot(-0.42, SHO_Y - HIP_Y, 0);
-  armL.add(mesh(G.armL, 0, 0.88 - SHO_Y));
-  const armR = pivot(0.42, SHO_Y - HIP_Y, 0);
-  armR.add(mesh(G.armR, 0, 0.88 - SHO_Y));
+  upper.add(mesh(G.torso, 0, 0.77 - HIP_Y));
+  upper.add(mesh(G.head, 0, 1.40 - HIP_Y));
+  const armL = pivot(-0.46, SHO_Y - HIP_Y, 0);
+  armL.add(mesh(G.armL, 0, -0.24));
+  const armR = pivot(0.46, SHO_Y - HIP_Y, 0);
+  armR.add(mesh(G.armR, 0, -0.24));
   upper.add(armL, armR);
 
-  // Legs rotate at the hips.
-  const legL = pivot(-0.17, HIP_Y, 0);
-  legL.add(mesh(G.legL, 0, 0.38 - HIP_Y));
-  const legR = pivot(0.17, HIP_Y, 0);
-  legR.add(mesh(G.legR, 0, 0.38 - HIP_Y));
+  // Stubby legs rotate at the hips.
+  const legL = pivot(-0.19, HIP_Y, 0);
+  legL.add(mesh(G.legL, 0, -0.24));
+  const legR = pivot(0.19, HIP_Y, 0);
+  legR.add(mesh(G.legR, 0, -0.24));
 
   grp.add(upper, legL, legR);
   grp.userData = {
@@ -691,10 +715,11 @@ function applyPaintUrl(grp, url) {
 function setPose(g, pose) {
   const S = HIDER_SCALE;
   const j = g.userData.joints;
-  // Reset to a clean standing rig.
+  // Reset to a clean standing rig (arms splay slightly outward, like the
+  // figures — they never hang dead straight).
   g.scale.set(S, S, S); g.rotation.x = 0; g.userData.baseY = 0;
   j.upper.rotation.set(0, 0, 0);
-  j.armL.rotation.set(0, 0, 0); j.armR.rotation.set(0, 0, 0);
+  j.armL.rotation.set(0, 0, -0.14); j.armR.rotation.set(0, 0, 0.14);
   j.legL.rotation.set(0, 0, 0); j.legR.rotation.set(0, 0, 0);
 
   switch (pose) {
@@ -711,7 +736,7 @@ function setPose(g, pose) {
     case 'kneel':                     // sit on folded legs
       j.legL.rotation.x = -2.5; j.legR.rotation.x = -2.5;
       j.armL.rotation.x = 0.25; j.armR.rotation.x = 0.25;
-      g.userData.baseY = -0.24 * S;
+      g.userData.baseY = -0.1 * S;
       break;
     case 'flat':                      // lie flat on the back, straight
       g.rotation.x = -Math.PI / 2; g.userData.baseY = 0.38 * S;
@@ -850,11 +875,27 @@ function paintRaycast(clientX, clientY) {
 function endStroke() { lastDab = null; if (paintDirtyForSync) sendTexture(true); }
 function fillAll() {
   if (!myChar) return;
+  pushUndo();
   const ctx = myChar.userData.ctx;
   ctx.fillStyle = brushColor; ctx.fillRect(0, 0, ATLAS, ATLAS);
   myChar.userData.texture.needsUpdate = true;
   sendTexture(true);
   SFX.splat();
+}
+
+// Paint undo (the original has one): snapshot before every stroke/fill.
+const undoStack = [];
+function pushUndo() {
+  if (!myChar) return;
+  undoStack.push(myChar.userData.ctx.getImageData(0, 0, ATLAS, ATLAS));
+  if (undoStack.length > 8) undoStack.shift();
+}
+function undoPaint() {
+  if (!myChar || !undoStack.length) return;
+  myChar.userData.ctx.putImageData(undoStack.pop(), 0, 0);
+  myChar.userData.texture.needsUpdate = true;
+  sendTexture(true);
+  SFX.click();
 }
 
 // ---- WHISTLE: the anti-camping heartbeat ----------------------------------
@@ -1031,6 +1072,34 @@ function clearanceAbove(x, y, z) {
 const MIN_HEADROOM_HIDER = 0.6;
 const MIN_HEADROOM_SEEKER = 1.4;  // the (taller) seeker can't duck under tables
 
+// Allow a move if the destination has enough headroom — OR at least as much
+// as where you already stand. Blocking on absolute clearance alone froze
+// players solid when they spawned under a low soffit: every neighbouring
+// spot was "too low" too, including the way out.
+function headroomOK(fromX, fromY, fromZ, toX, toGy, toZ, min) {
+  const dest = clearanceAbove(toX, toGy, toZ);
+  if (dest >= min) return true;
+  const here = clearanceAbove(fromX, groundUnder(fromX, fromY + 0.4, fromZ), fromZ);
+  return dest >= here - 0.05;      // never into LOWER clearance, always out
+}
+
+// Highest walkable surface at (x,z), probed from far above — used to place
+// spawns correctly on sloped/raised terrain (e.g. the plaza hill).
+function surfaceTop(x, z) {
+  if (!collisionMeshes.length) return 0;
+  _ro.set(x, 40, z); _rd.set(0, -1, 0);
+  _rc.set(_ro, _rd); _rc.far = 80;
+  const h = _rc.intersectObjects(collisionMeshes, true)[0];
+  return h ? h.point.y : 0;
+}
+
+// Vertical play limit: keeps players from hopping over the flat's wall tops,
+// while still allowing genuinely tall maps (hillside plazas etc.).
+function roofY() {
+  const map = snap && MAPS[snap.mapId];
+  return (map && map.roof) || ROOF;
+}
+
 // Is there a building floor under (x,z)? Used to keep players ON the floors
 // and out of the surrounding void (anti-escape).
 function hasFloor(x, z, fromY) {
@@ -1104,7 +1173,7 @@ function applyMovement(dt) {
       // Screen-right while the camera faces the wall (along climbDir) is
       // climbDir × up = (-dz, dx).
       const up = joyVec.y, side = joyVec.x;
-      if (up > 0) { const ny = (p.y || 0) + up * HIDER_MOVE_SPEED * dt; if (ny <= ROOF) p.y = ny; }
+      if (up > 0) { const ny = (p.y || 0) + up * HIDER_MOVE_SPEED * dt; if (ny <= roofY()) p.y = ny; }
       else if (up < 0) { p.y = Math.max(0, (p.y || 0) + up * HIDER_MOVE_SPEED * dt); }
       if (side) {
         const px = -climbDir.z, pz = climbDir.x;
@@ -1151,7 +1220,7 @@ function applyMovement(dt) {
         [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
         // Stay on the building floor, and never crawl under furniture.
         const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
-        if (hasFloor(nx, nz, p.y) && clearanceAbove(nx, gy, nz) >= MIN_HEADROOM_HIDER) {
+        if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_HIDER)) {
           p.x = nx; p.z = nz;
         }
       }
@@ -1163,7 +1232,7 @@ function applyMovement(dt) {
       let ny = (p.y || 0) + p.vy * dt;
       const g = groundUnder(p.x, ny, p.z);
       if (ny <= g) { ny = g; p.vy = 0; }
-      if (ny > ROOF) { ny = ROOF; if (p.vy > 0) p.vy = 0; }
+      const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
       p.y = ny;
     }
     nearSurface = !climbing && (frameCount % 3 === 0 ? detectSurface(p) : nearSurface);
@@ -1179,7 +1248,7 @@ function applyMovement(dt) {
       let nz = clamp(p.z + mv.z * mv.mag * MOVE_SPEED * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
       const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
-      if (hasFloor(nx, nz, p.y) && clearanceAbove(nx, gy, nz) >= MIN_HEADROOM_SEEKER) {
+      if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER)) {
         p.x = nx; p.z = nz; // stay on the building floor, out from under furniture
       }
     }
@@ -1189,7 +1258,7 @@ function applyMovement(dt) {
     let ny = (p.y || 0) + p.vy * dt;
     const g = groundUnder(p.x, ny, p.z);
     if (ny <= g) { ny = g; p.vy = 0; }
-    if (ny > ROOF) { ny = ROOF; if (p.vy > 0) p.vy = 0; }
+    const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
     sendSeek();
   } else if (iSpectate()) {
@@ -1246,7 +1315,10 @@ function updateCamera() {
     const cyMin = (target.y || 0) + 0.12;
     const cyWant = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
     let cy = Math.max(cyMin, cyWant);
-    const lookY = (target.y || 0) + 1.0 * s + Math.max(0, cyMin - cyWant);
+    let lookY = (target.y || 0) + 1.0 * s + Math.max(0, cyMin - cyWant);
+    // Paint mode: aim below the body so it rides high on screen, clear of the
+    // paint strip along the bottom.
+    if (sheetOpen === 'paint') lookY -= 0.85 * s;
     // Pull the camera in if geometry is between it and the chameleon, so it
     // never buries inside a wall/furniture.
     if (collisionMeshes.length) {
@@ -1414,6 +1486,8 @@ window.addEventListener('keydown', (e) => {
   if (k === ' ') { jumpAskedAt = performance.now(); e.preventDefault(); }
   if (k === 'e') { if (climbing) { stopClimb(); sendMove(true); } else startClimb(); }
   if (k === '1' || k === 'q') sendWhistle();
+  if (k === 'f') { if (hiderControls()) openSheet(sheetOpen === 'paint' ? null : 'paint'); } // paint mode, like the original
+  if (k === 'r') { if (hiderControls()) openSheet(sheetOpen === 'pose' ? null : 'pose'); }
   if (k === '=' || k === '+') applyZoom(-0.35);
   if (k === '-' || k === '_') applyZoom(0.35);
 });
@@ -1483,7 +1557,11 @@ canvas.addEventListener('pointerdown', (e) => {
   if (lookId !== null) return;
   lookId = e.pointerId; lookStart = { x: e.clientX, y: e.clientY, t: Date.now() }; moved = 0;
   painting = false;
-  if (hiderControls() && paintRaycast(e.clientX, e.clientY)) painting = true;
+  if (hiderControls()) {
+    pushUndo();                                  // snapshot in case this becomes a stroke
+    if (paintRaycast(e.clientX, e.clientY)) painting = true;
+    else undoStack.pop();                        // it didn't — drop the snapshot
+  }
 });
 canvas.addEventListener('pointermove', (e) => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1496,10 +1574,11 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (e.pointerId !== lookId) return;
   if (painting) { paintRaycast(e.clientX, e.clientY); return; }
+  // "Grab the world": drag left → look left (camera pans WITH the finger).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
-  cam.yaw -= dx * 0.005;
-  cam.pitch -= dy * 0.005;
+  cam.yaw += dx * 0.005;
+  cam.pitch += dy * 0.005;
 });
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);
@@ -1528,7 +1607,7 @@ function handleTap(clientX, clientY) {
     // the brush. Reading the rendered image (with lighting + fog) gives the
     // colour the surface actually shows on screen — the best camouflage match.
     const color = sampleScreenColor(clientX, clientY);
-    if (color) { setBrushColor(color); SFX.click(); toast(`🎨 Colour picked`, 700); }
+    if (color) { setBrushColor(color); rememberColor(color); SFX.click(); toast(`🎨 Colour picked`, 700); }
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
     seekerShoot(clientX, clientY);
   }
@@ -1642,8 +1721,26 @@ function sampleScreenColor(clientX, clientY) {
 function setBrushColor(color) {
   brushColor = color;
   $('colorInput').value = color;
-  document.querySelectorAll('#palette .swatch').forEach((s) =>
+  document.querySelectorAll('#palette .swatch, #recentColors .swatch').forEach((s) =>
     s.classList.toggle('active', s.dataset.c === color));
+}
+
+// Eyedropped colours are remembered as quick swatches (the original's saved
+// palette) — sample the wall once, keep repainting with it all round.
+const recentColors = [];
+function rememberColor(color) {
+  const i = recentColors.indexOf(color);
+  if (i !== -1) recentColors.splice(i, 1);
+  recentColors.unshift(color);
+  if (recentColors.length > 4) recentColors.pop();
+  const wrap = $('recentColors'); wrap.innerHTML = '';
+  for (const c of recentColors) {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (c === brushColor ? ' active' : '');
+    b.style.background = c; b.dataset.c = c;
+    b.addEventListener('click', () => { setBrushColor(c); SFX.click(); });
+    wrap.appendChild(b);
+  }
 }
 // Movement/pose go out frequently but tiny; the painted texture is large so
 // it's sent on its own throttle (and once at each stroke end).
@@ -1664,14 +1761,27 @@ function sendTexture(force) {
   catch (_) { url = myChar.userData.canvas.toDataURL('image/png'); }
   socket.emit('paint', { paint: url });
 }
-// Paint / Pose slide-up panels (mobile-friendly: one open at a time).
-let sheetOpen = null;
+// Paint / Pose tool strips (mobile-friendly: one open at a time). Opening the
+// paint strip is a proper "paint mode" — the camera glides in close to your
+// body so you can brush it comfortably (like the real game's paint mode),
+// and glides back out when you close it.
+let sheetOpen = null, prePaintDist = null;
 function openSheet(which) {
+  const wasPaint = sheetOpen === 'paint';
   sheetOpen = which;
   $('paintPanel').classList.toggle('hidden', which !== 'paint');
   $('posePanel').classList.toggle('hidden', which !== 'pose');
   $('paintToggle').classList.toggle('open', which === 'paint');
   $('poseToggle').classList.toggle('open', which === 'pose');
+  document.body.classList.toggle('paint-mode', which === 'paint');
+  if (which === 'paint' && !wasPaint && canZoom()) {
+    prePaintDist = TP.dist;
+    TP.dist = 0.75;                 // zoom in on your own body…
+    cam.pitch = 0.25;               // …and level out so you see it side-on
+  } else if (wasPaint && which !== 'paint' && prePaintDist != null) {
+    TP.dist = prePaintDist;         // back out to the hiding view
+    prePaintDist = null;
+  }
 }
 $('paintToggle').addEventListener('click', () => { openSheet(sheetOpen === 'paint' ? null : 'paint'); SFX.click(); });
 $('poseToggle').addEventListener('click', () => { openSheet(sheetOpen === 'pose' ? null : 'pose'); SFX.click(); });
@@ -1694,6 +1804,10 @@ document.querySelectorAll('#posePanel .pose').forEach((b) =>
   }));
 $('colorInput').addEventListener('input', (e) => setBrushColor(e.target.value));
 $('fillAllBtn').addEventListener('click', fillAll);
+$('undoBtn').addEventListener('click', undoPaint);
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { undoPaint(); e.preventDefault(); }
+});
 
 // Colour palette: quick-pick swatches.
 const PALETTE = ['#ffffff', '#111111', '#e23b3b', '#f59e0b', '#ffe14d', '#3bd16a',
@@ -1790,19 +1904,21 @@ function renderGame() {
     myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
                pose: snap.myBody.pose || 'standing', paint: snap.myBody.paint || null };
     myBodyRound = snap.round;
-    cam.yaw = (snap.myBody.ry || 0); cam.pitch = 0.35; TP.dist = 1.6; // reset zoom
+    cam.yaw = (snap.myBody.ry || 0); cam.pitch = 0.35; TP.dist = 1.1; // reset zoom
     climbing = false;
     myWhistleDeadline = 0;
     removeMyChar();                 // fresh mannequin (or restored paint)
     $('colorInput').value = brushColor;
     syncPoseButtons();
     clearSplats();                  // last round's paint splats vanish
+    undoStack.length = 0;
     // Never start wedged inside furniture/walls: shift to the nearest clear spot.
     // (Scene GLBs may still be loading; retry a few times as colliders appear.)
     const fix = (tries) => {
       if (!myBody || myBodyRound !== snap.round) return;
       const [cx, cz] = findClearSpawn(myBody.x, myBody.z);
       myBody.x = cx; myBody.z = cz;
+      myBody.y = surfaceTop(cx, cz) + 0.02;   // sloped maps: start ON the terrain
       if (tries > 0) setTimeout(() => fix(tries - 1), 700);
     };
     fix(4);
@@ -1810,7 +1926,7 @@ function renderGame() {
   if (phase === 'hunt' && role === 'seeker' && seekerRound !== snap.round) {
     const sb = snap.myBody || { x: 0, z: 0 };  // server-assigned spawn (different room from hiders)
     const [sx2, sz2] = findClearSpawn(sb.x, sb.z, 0.5);
-    seekerPos = { x: sx2, y: sb.y || 0, z: sz2, vy: 0 };
+    seekerPos = { x: sx2, y: Math.max(sb.y || 0, surfaceTop(sx2, sz2) + 0.02), z: sz2, vy: 0 };
     cam.yaw = sb.ry || 0; cam.pitch = 0;
     seekerRound = snap.round;
   }

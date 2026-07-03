@@ -1,4 +1,4 @@
-// Shared 3D map definition for Doodle Guys.
+// Shared 3D map definition for Doodler Guys.
 //
 // There is ONE big map ("The Grounds") built from the Kenney low-poly kits in
 // /public/models. It is a walled compound divided into a 3x3 grid of themed
@@ -71,6 +71,29 @@ export const MAPS = {
       [[-12, 0], [-16, 0], [-8, -2], [-10, 3]],                 // west wing
       [[0, -3], [0, 3], [-4, 0], [4, 0]],                       // living / dining
       [[12, 0], [16, 0], [8, -2], [10, 3]],                     // east wing
+    ],
+  },
+
+  // ---- The Plaza: an outdoor sports square — courts, stands, trees and
+  // street furniture. Open air and bright: a totally different hunt from
+  // the indoor flat.
+  plaza: {
+    id: 'plaza',
+    name: 'The Plaza',
+    size: { x: 52, z: 52, h: 14 },
+    ground: '#8fae74',
+    sky: '#aed8f0',
+    fog: { color: '#cfe7f5', near: 45, far: 140 },
+    scenes: [
+      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 46, collide: true },
+    ],
+    roof: 10,          // the plaza sits on a hill — allow real altitude
+    bounds: { minX: -21, maxX: 21, minZ: -21, maxZ: 21 },
+    // Spawns probed in-game: each settles on walkable ground with room to move.
+    spawnRooms: [
+      [[-8, 0], [-10, -4], [-4, -6]],           // west terrace & lawn
+      [[0, -8], [0, 3], [6, -6]],               // central paths
+      [[8, 0], [4, 6], [12, 8]],                // east court side
     ],
   },
 
