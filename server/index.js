@@ -314,7 +314,7 @@ io.on('connection', (socket) => {
 
   // Seeker reports its position (for spectators' minimaps). Privacy is handled
   // in snapshot() — only caught spectators get the seeker dot.
-  socket.on('seekmove', ({ x, z, ry }) => {
+  socket.on('seekmove', ({ x, y, z, ry }) => {
     const r = room();
     const p = me();
     if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt') return;
@@ -322,6 +322,7 @@ io.on('connection', (socket) => {
       const [cx, cz] = clampToRoom(r.map, x, z);
       p.body.x = cx; p.body.z = cz;
     }
+    if (typeof y === 'number') p.body.y = Math.max(-2, Math.min(20, y));
     if (typeof ry === 'number') p.body.ry = ry;
     scheduleBroadcast(r);
   });

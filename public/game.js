@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=7';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=8';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -351,13 +351,15 @@ function mulberry32(seed) {
 const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
 // Pitch range is deliberately modest: past ~±70° the orbit maths approaches
 // straight-up/straight-down, where lookAt's up-vector flips the whole view.
-const TP = { dist: 1.1, pitchMin: -0.42, pitchMax: 1.2 };  // world distance (zoomable); negative pitch = look up
+const TP = { dist: 0.95, pitchMin: -0.42, pitchMax: 1.2 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 const MOVE_SPEED = 5.4;                    // seeker (full-size hunter)
-// Hiders are tiny figurine-sized mannequins (~0.45m tall) so they can really
-// tuck in among the scenery — the headroom rule still keeps them out of
-// unspottable under-furniture gaps.
-const HIDER_SCALE = 0.24;
+// Hiders are tiny toy-sized mannequins (~0.34m tall) so they can genuinely
+// melt into the furniture — the headroom rule still keeps them out of
+// unspottable under-furniture gaps. The seeker is a full-size mannequin.
+const HIDER_SCALE = 0.18;
+const SEEKER_SCALE = 1.0;
+const SEEKER_CAM_DIST = 3.2;               // third-person framing for the big hunter
 const HIDER_MOVE_SPEED = 3.3;
 
 function initThree() {
@@ -715,7 +717,7 @@ function applyPaintUrl(grp, url) {
 // 'climb', the wall-flatten "picture frame trick" (back against the wall,
 // spread wide, ry = facing OUT of the wall).
 function setPose(g, pose) {
-  const S = HIDER_SCALE;
+  const S = g.userData.scale || HIDER_SCALE;   // hiders are tiny, seekers full-size
   const j = g.userData.joints;
   // Reset to a clean standing rig (arms splay slightly outward, like the
   // figures — they never hang dead straight).
@@ -777,26 +779,55 @@ function ensureMyChar(body) {
 }
 function removeMyChar() { if (myChar) { scene.remove(myChar); myChar = null; } }
 
+// Turn a freshly built mannequin into a SEEKER: full-size and charcoal-dark,
+// unmistakable next to the tiny white hiders.
+function makeSeekerLook(g) {
+  g.userData.scale = SEEKER_SCALE;
+  const { ctx, texture } = g.userData;
+  ctx.fillStyle = '#3a3f47'; ctx.fillRect(0, 0, ATLAS, ATLAS);
+  texture.needsUpdate = true;
+  setPose(g, 'standing');
+  g.userData.pose = 'standing';
+}
+
+// The local seeker's own body (third person — you see yourself hunt).
+let seekerChar = null;
+function ensureSeekerChar(p) {
+  if (!seekerChar) {
+    seekerChar = buildCharacter(null);
+    makeSeekerLook(seekerChar);
+    scene.add(seekerChar);
+  }
+  seekerChar.position.set(p.x, p.y || 0, p.z);
+}
+function removeSeekerChar() { if (seekerChar) { scene.remove(seekerChar); seekerChar = null; } }
+
 function syncHunt(bodies, skipMine) {
   const seen = new Set();
   for (const b of bodies) {
-    if (skipMine && b.mine) continue; // I render myself via myChar (local, smooth)
+    if (b.mine && (skipMine || b.seeker)) continue; // my own body renders locally
     seen.add(b.id);
     let g = charGroups.get(b.id);
+    // Infection mode: a caught hider re-enters as a seeker — rebuild the rig.
+    if (g && !!g.userData.isSeeker !== !!b.seeker) {
+      scene.remove(g); charGroups.delete(b.id); g = null;
+    }
     if (!g) {
       g = buildCharacter(b.paint);
       g.userData.hiderId = b.id;
       g.userData.pose = 'standing';
+      g.userData.isSeeker = !!b.seeker;
+      if (b.seeker) makeSeekerLook(g);   // hiders see the big dark hunter coming
       scene.add(g); charGroups.set(b.id, g);
     }
-    applyPaintUrl(g, b.paint);
+    if (!b.seeker) applyPaintUrl(g, b.paint);
     if (g.userData.pose !== b.pose) { setPose(g, b.pose); g.userData.pose = b.pose; }
     // Snapshots arrive ~10×/s; store the target and glide there per-frame in
     // updateRemoteAnims so remote players move at full frame rate.
     const ty = (b.y || 0) + (g.userData.baseY || 0);
     if (!g.userData.init) { g.position.set(b.x, ty, b.z); g.rotation.y = b.ry || 0; g.userData.init = true; }
     g.userData.tgt = { x: b.x, y: ty, z: b.z, ry: b.ry || 0 };
-    setFound(g, b.found);
+    if (!b.seeker) setFound(g, b.found);
   }
   for (const [id, g] of [...charGroups]) {
     if (!seen.has(id)) { scene.remove(g); charGroups.delete(id); }
@@ -837,6 +868,24 @@ function updateRemoteAnims(dt, t) {
     const vy = myBody.vy || 0;
     const stretch = Math.abs(vy) > 0.6 ? clamp(1 + vy * 0.02, 0.88, 1.14) : 1;
     myChar.scale.y += (HIDER_SCALE * stretch - myChar.scale.y) * Math.min(1, dt * 14);
+  }
+  // The local seeker's own body: swing the limbs while striding.
+  if (seekerChar && seekerPos) {
+    const j = seekerChar.userData.joints;
+    const lp = seekerChar.userData.lastPos || (seekerChar.userData.lastPos = { x: seekerPos.x, z: seekerPos.z });
+    const speed = Math.hypot(seekerPos.x - lp.x, seekerPos.z - lp.z) / Math.max(dt, 0.001);
+    lp.x = seekerPos.x; lp.z = seekerPos.z;
+    if (speed > 0.3) {
+      seekerChar.userData.wp = (seekerChar.userData.wp || 0) + dt * 9;
+      const a = Math.sin(seekerChar.userData.wp) * 0.55;
+      j.legL.rotation.x = a; j.legR.rotation.x = -a;
+      j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
+    } else if (seekerChar.userData.wp) {
+      seekerChar.userData.wp = 0;
+      j.legL.rotation.x = j.legR.rotation.x = 0;
+      j.armL.rotation.x = j.armR.rotation.x = 0;
+    }
+    j.upper.scale.y = 1 + Math.sin(t * 2.1) * 0.012;
   }
 }
 function clearChars() {
@@ -1015,7 +1064,7 @@ function slideMove(px, pz, nx, nz, y, rad, midY) {
 // Snappy arcade jump: strong gravity + strong impulse = quick, punchy arc
 // (~1.15m apex in ~0.55s round trip) instead of the old floaty drift.
 const GRAVITY = 32, JUMP_VEL = 8.6, CLING_RANGE = 1.2, ROOF = 2.6;
-const CLING_GAP = 0.12;  // half the body's depth — flush without clipping in
+const CLING_GAP = 0.09;  // half the tiny body's depth — flush without clipping in
 const CLING_REACH = 0.5; // re-stick range: detach promptly once the surface ends
 const JUMP_BUFFER_MS = 160; // press slightly early and it still fires on landing
 let jumpAskedAt = 0, climbing = false, nearSurface = false, climbMiss = 0;
@@ -1243,9 +1292,10 @@ function applyMovement(dt) {
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     const p = seekerPos; p.vy = p.vy || 0;
     const SRAD = 0.4, RAYY = (p.y || 0) + 0.35;
-    // First-person: WASD strafes relative to the view.
+    // Third person: move camera-relative and turn the body to face travel.
     const mv = moveVector();
     if (mv) {
+      p.ry = lerpAngle(p.ry || 0, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
       let nx = clamp(p.x + mv.x * mv.mag * MOVE_SPEED * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * mv.mag * MOVE_SPEED * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
@@ -1262,6 +1312,8 @@ function applyMovement(dt) {
     if (ny <= g) { ny = g; p.vy = 0; }
     const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
+    ensureSeekerChar(p);
+    seekerChar.rotation.y = p.ry || 0;
     sendSeek();
   } else if (iSpectate()) {
     // Caught: roam freely as a spectator (camera-relative, on the floor).
@@ -1291,13 +1343,14 @@ function syncPoseButtons() {
     x.classList.toggle('active', x.dataset.pose === pose));
 }
 
-// Seeker tells the server its position (so spectators' minimaps update).
+// Seeker tells the server its position (hiders see the hunter in-world, and
+// spectators' minimaps update).
 let lastSeekSent = 0;
 function sendSeek() {
   const now = Date.now();
   if (now - lastSeekSent < 120) return;
   lastSeekSent = now;
-  socket.emit('seekmove', { x: seekerPos.x, z: seekerPos.z, ry: cam.yaw });
+  socket.emit('seekmove', { x: seekerPos.x, y: seekerPos.y || 0, z: seekerPos.z, ry: seekerPos.ry || 0 });
 }
 
 function updateCamera() {
@@ -1353,7 +1406,7 @@ function updateCamera() {
   };
 
   if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
-  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) firstPerson(seekerPos);
+  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) thirdPerson(seekerPos, SEEKER_SCALE);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
     if (mine) thirdPerson(mine, HIDER_SCALE * 2);
@@ -1509,7 +1562,10 @@ function keyboardVec() {
 }
 // Zoom the third-person camera in/out (paint detail up close, survey from
 // afar): mouse wheel, pinch, +/- keys, or the on-screen buttons.
-function canZoom() { return hiderControls() || iSpectate(); }
+function canZoom() {
+  return hiderControls() || iSpectate() ||
+    (snap && snap.phase === 'hunt' && snap.myRole === 'seeker');
+}
 function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.45, 8); }
 $('stage').addEventListener('wheel', (e) => {
   if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
@@ -1932,8 +1988,9 @@ function renderGame() {
   if (phase === 'hunt' && role === 'seeker' && seekerRound !== snap.round) {
     const sb = snap.myBody || { x: 0, z: 0 };  // server-assigned spawn (different room from hiders)
     const [sx2, sz2] = findClearSpawn(sb.x, sb.z, 0.5);
-    seekerPos = { x: sx2, y: Math.max(sb.y || 0, surfaceTop(sx2, sz2) + 0.02), z: sz2, vy: 0 };
-    cam.yaw = sb.ry || 0; cam.pitch = 0;
+    seekerPos = { x: sx2, y: Math.max(sb.y || 0, surfaceTop(sx2, sz2) + 0.02), z: sz2, ry: sb.ry || 0, vy: 0 };
+    cam.yaw = sb.ry || 0; cam.pitch = 0.35;
+    TP.dist = SEEKER_CAM_DIST;                 // third person behind the big hunter
     seekerRound = snap.round;
   }
 
@@ -1957,14 +2014,16 @@ function renderGame() {
   }
 
   // Scene occupants. The controlling hider draws itself via myChar (smooth,
-  // local); everyone else (and a caught/spectating self) comes from syncHunt.
+  // local); the seeker draws itself via seekerChar; everyone else (and a
+  // caught/spectating self) comes from syncHunt.
   if (hiderControls()) ensureMyChar(myBody);
   else removeMyChar();
+  if (!(phase === 'hunt' && role === 'seeker')) removeSeekerChar();
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
 
   // Reveal beacons: at round end, a golden pillar marks every survivor's spot.
-  syncBeacons(phase === 'roundover' ? (snap.bodies || []).filter((b) => !b.found) : []);
+  syncBeacons(phase === 'roundover' ? (snap.bodies || []).filter((b) => !b.found && !b.seeker) : []);
 
   // Controls visibility
   const canMove = hiderControls();           // hider, prep or hunt, not caught
@@ -2134,7 +2193,10 @@ socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));
 
 // Dev/debug helpers (harmless in production).
-window.__tp = (x, z) => { const p = myBody || seekerPos; if (p) { p.x = x; p.z = z; p.y = 2; } };
+window.__tp = (x, z) => {
+  const p = (snap && snap.myRole === 'seeker' && seekerPos) ? seekerPos : myBody;
+  if (p) { p.x = x; p.z = z; p.y = 2; }
+};
 window.__look = (yaw) => { cam.yaw = yaw; if (myBody) myBody.ry = yaw; };
 window.__shoot = (x, z) => socket.emit('shoot', { x, y: 0.5, z, color: '#ff3bd0' });
 window.__state = () => ({
