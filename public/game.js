@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=6';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=7';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -349,7 +349,9 @@ function mulberry32(seed) {
 }
 
 const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
-const TP = { dist: 1.1, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
+// Pitch range is deliberately modest: past ~±70° the orbit maths approaches
+// straight-up/straight-down, where lookAt's up-vector flips the whole view.
+const TP = { dist: 1.1, pitchMin: -0.42, pitchMax: 1.2 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 const MOVE_SPEED = 5.4;                    // seeker (full-size hunter)
 // Hiders are tiny figurine-sized mannequins (~0.45m tall) so they can really
@@ -1311,11 +1313,15 @@ function updateCamera() {
     let cx = target.x - f.x * horiz;
     let cz = target.z - f.z * horiz;
     // The camera never drops below the floor; instead, when you drag down past
-    // level the look target rises so you look UP (at the ceiling / up the walls).
+    // level the look target rises so you look UP a little. The rise is CAPPED
+    // relative to the camera distance — uncapped, a zoomed-out drag could tilt
+    // the view past vertical, where lookAt's up-vector flips everything
+    // upside down.
     const cyMin = (target.y || 0) + 0.12;
     const cyWant = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
     let cy = Math.max(cyMin, cyWant);
-    let lookY = (target.y || 0) + 1.0 * s + Math.max(0, cyMin - cyWant);
+    const lift = Math.min(Math.max(0, cyMin - cyWant), dist * 0.55);
+    let lookY = (target.y || 0) + 1.0 * s + lift;
     // Paint mode: aim below the body so it rides high on screen, clear of the
     // paint strip along the bottom.
     if (sheetOpen === 'paint') lookY -= 0.85 * s;
