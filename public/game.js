@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=8';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=9';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -353,7 +353,7 @@ const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
 // straight-up/straight-down, where lookAt's up-vector flips the whole view.
 const TP = { dist: 0.95, pitchMin: -0.42, pitchMax: 1.2 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
-const MOVE_SPEED = 5.4;                    // seeker (full-size hunter)
+const MOVE_SPEED = 3.8;                    // seeker: a heavy stalk, not a sprint
 // Hiders are tiny toy-sized mannequins (~0.34m tall) so they can genuinely
 // melt into the furniture — the headroom rule still keeps them out of
 // unspottable under-furniture gaps. The seeker is a full-size mannequin.
@@ -730,31 +730,38 @@ function setPose(g, pose) {
     case 'cheer':                     // both arms up in a V
       j.armL.rotation.set(2.7, 0, -0.5); j.armR.rotation.set(2.7, 0, 0.5);
       break;
-    case 'head':                      // hands on head
-      j.armL.rotation.set(2.7, 0, 0.85); j.armR.rotation.set(2.7, 0, -0.85);
+    case 'head':                      // hands pressed to the sides of the head
+      // The head is huge and the arms are short — anything steeper than a
+      // slight inward tilt buries the hands inside the skull.
+      j.armL.rotation.set(2.9, 0, 0.1); j.armR.rotation.set(2.9, 0, -0.1);
       break;
     case 'zombie':                    // lean forward, arms out straight
       j.upper.rotation.x = 0.42;
       j.armL.rotation.x = 1.35; j.armR.rotation.x = 1.35;
       break;
     case 'kneel':                     // sit on folded legs
-      j.legL.rotation.x = -2.5; j.legR.rotation.x = -2.5;
-      j.armL.rotation.x = 0.25; j.armR.rotation.x = 0.25;
+      // Fold the stub legs back and splay them out so the knees poke out
+      // beside the torso instead of vanishing into it.
+      j.legL.rotation.set(-1.9, 0, -0.35); j.legR.rotation.set(-1.9, 0, 0.35);
+      j.armL.rotation.set(0.3, 0, -0.2); j.armR.rotation.set(0.3, 0, 0.2);
       g.userData.baseY = -0.1 * S;
       break;
     case 'flat':                      // lie flat on the back, straight
       g.rotation.x = -Math.PI / 2; g.userData.baseY = 0.38 * S;
       break;
     case 'ball':                      // curl into a round ball, face down
+      // Gentler tucks: the short limbs hug the ball's outside instead of
+      // disappearing into the fat torso.
       j.upper.rotation.x = 1.7;
-      j.armL.rotation.set(-1.5, 0, 0.35); j.armR.rotation.set(-1.5, 0, -0.35);
-      j.legL.rotation.x = -1.7; j.legR.rotation.x = -1.7;
+      j.armL.rotation.set(-1.05, 0, -0.45); j.armR.rotation.set(-1.05, 0, 0.45);
+      j.legL.rotation.set(-1.15, 0, -0.35); j.legR.rotation.set(-1.15, 0, 0.35);
       g.userData.baseY = 0.15 * S;
       break;
     case 'star':                      // starfish flat on the floor, face down
       g.rotation.x = Math.PI / 2; g.userData.baseY = 0.38 * S;
-      j.armL.rotation.set(2.6, 0, -0.75); j.armR.rotation.set(2.6, 0, 0.75);
-      j.legL.rotation.z = -0.55; j.legR.rotation.z = 0.55;
+      // Wider X: arms swing further out so the whole limb clears the torso.
+      j.armL.rotation.set(2.5, 0, -1.15); j.armR.rotation.set(2.5, 0, 1.15);
+      j.legL.rotation.z = -0.7; j.legR.rotation.z = 0.7;
       break;
     case 'climb':                     // flattened on a wall, spread-eagle
       j.armL.rotation.z = -2.35; j.armR.rotation.z = 2.35;
