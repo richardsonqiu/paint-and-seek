@@ -24,8 +24,10 @@
 // `s` scales relative to the kit's calibrated base scale; `scale` overrides
 // with an absolute value. `solid` adds it to the collision set.
 
-// The 8 doodler poses (à la the "Hidden in Plain Sight" figures).
-export const POSES = ['standing', 'cheer', 'head', 'wide', 'wave', 'ball', 'flat', 'kneel'];
+// Mannequin poses (matching the Meccha Chameleon figure set): break the
+// humanoid silhouette to imitate props. 'climb' is the wall-flatten
+// ("picture frame trick").
+export const POSES = ['standing', 'cheer', 'head', 'zombie', 'kneel', 'flat', 'ball', 'star', 'climb'];
 
 const TOWN = 'kenney_fantasy-town-kit_2.0';
 const PLAT = 'kenney_platformer-kit';
@@ -47,32 +49,28 @@ const R = 27;   // half-size (perimeter)
 const W = 9;    // internal wall offset
 
 export const MAPS = {
-  // ---- The Flats: a compact, mobile-friendly multi-room map -------------
-  // Built from a couple of light interior floor-plan GLBs placed next to each
-  // other so you can walk room-to-room. Every mesh is a collider, so hiders
-  // stick against walls/furniture to hide.
+  // ---- The Flat: a single connected apartment (à la the real game's ------
+  // single-interior maps). One bright floor-plan GLB; every room reachable
+  // through open doorways, every mesh a collider so hiders can tuck against
+  // walls/furniture (but not under them).
   rooms: {
     id: 'rooms',
-    name: 'The Flats',
-    size: { x: 84, z: 84, h: 12 },
+    name: 'The Flat',
+    size: { x: 48, z: 24, h: 12 },
     ground: '#8c9498',
     sky: '#cfe2f1',
     fog: { color: '#dcebf4', near: 45, far: 130 },
     scenes: [
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 42, collide: true },
-      { file: 'apartment-floor-plan/source/apartment.glb', pos: [40, 0], fit: 26, collide: true },
     ],
-    // A covered walkway bridging the gap between the two flats.
-    connectors: [
-      { from: [20, 0], to: [28, 0], width: 7 },
-    ],
-    // Confine play to the buildings + walkway (no wandering the empty void).
-    bounds: { minX: -23, maxX: 55, minZ: -15, maxZ: 15 },
-    // Spawn points grouped by room/flat. Each round the seeker and the hiders
-    // are placed in DIFFERENT rooms so the hider isn't trivially next to them.
+    // Confine play to the flat (no wandering the empty void).
+    bounds: { minX: -21, maxX: 21, minZ: -8, maxZ: 8 },
+    // Spawn points grouped by area. Each round the seeker and the hiders are
+    // placed in DIFFERENT areas so a hider never starts next to the seeker.
     spawnRooms: [
-      [[-12, 0], [12, 0], [0, -3], [0, 3], [-6, 0], [6, 0]],   // Flat A (floorplan)
-      [[40, 6], [40, -6], [34, 0], [46, 0]],                    // Flat B (apartment)
+      [[-12, 0], [-16, 0], [-8, -2], [-10, 3]],                 // west wing
+      [[0, -3], [0, 3], [-4, 0], [4, 0]],                       // living / dining
+      [[12, 0], [16, 0], [8, -2], [10, 3]],                     // east wing
     ],
   },
 

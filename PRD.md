@@ -1,93 +1,72 @@
-# Product Requirements Document — **Doodle Guys**
+# Product Requirements Document — **Meccha Doodlers**
 
-> *Draw yourself invisible.*
+> *Blend in. Don't get caught.*
 >
-> A browser-based, mobile-first multiplayer paint-and-seek party game, inspired by Meccha Chameleon.
+> A browser-based, mobile-first 3D multiplayer camouflage hide-and-seek party game — a faithful homage to **Meccha Chameleon** (lemorion_1224 / Haganeiro, Steam 2026).
 
 ## 1. Overview
 
-Doodle Guys splits players into **Hiders** and **Seekers**. Hiders start as plain white "doodlers" and must paint themselves to blend into the environment, pick a hiding spot and pose, then freeze before Seekers come hunting. Runs entirely in the browser — no download — with mobile-first touch controls and room-code joining.
+Meccha Doodlers splits players into **Hiders** (white chameleon mannequins) and a minority of **Seekers**. Hiders freehand-paint their own bodies with colours eyedropped from the environment, pick a silhouette-breaking pose, and freeze. Seekers hunt in first-person with a paint gun — but **every missed shot costs paint**, and running dry eliminates the seeker. Runs entirely in the browser — no download — with mobile-first touch controls and room-code joining.
 
-## 2. Name & branding
+## 2. Fidelity pillars (what makes it feel like Meccha Chameleon)
 
-- **Name:** Doodle Guys
-- **Tagline:** *Draw yourself invisible.*
-- Characters are called **Doodlers**; room codes look like `QTDZ`.
+1. **Freehand body-painting** with a world-colour eyedropper and a deliberately tight hide timer. No auto-camouflage — invisibility is pure paint skill.
+2. **Pose system**: stand · crouch · ball · lie flat · **wall-flatten** (the "picture frame trick", climbable up/down/sideways).
+3. **Miss-costs-paint seeker gun** (5 charges) — forces close inspection instead of spam-shooting.
+4. **Whistle system**: hiders auto-whistle every 45 s (positional audio); a manual whistle resets the countdown.
+5. **White→red hider icon HUD** and a **round-end reveal** of every survivor's hiding spot (golden beacons) before the scoreboard.
+6. **Locked seeker spawn** during the hide phase.
 
-## 3. Target platform
-
-- Primary: mobile browser (iOS Safari, Android Chrome), portrait & landscape.
-- Secondary: desktop browser.
-- No download, no account. Join by 4-letter code or shared link. Low-bandwidth, 2D rendering.
-
-## 4. Core loop
+## 3. Core loop
 
 ```
 Host creates room → players join by code/link
-  → roles assigned (Hiders / Seekers)
-  → PREP: hiders explore, paint, pose, freeze
-  → HUNT: seekers scan & tag; hiders hold still
-  → round ends → scores → next round (roles reshuffle)
+  → roles assigned (~1 seeker per 3 players, reshuffled per round)
+  → HIDE: hiders roam/paint/pose; seekers see a locked countdown screen
+  → SEEK: seeker hunts first-person, shoots to catch; misses cost paint
+  → REVEAL: beacons mark survivors' spots → scores → next round
 ```
 
-## 5. Features
+Wins: seeker clears everyone → seekers win; ≥1 hider survives (or all seekers run dry) → hiders win.
 
-### Lobby & rooms
-Create/join by 4-char code, share link (`/?room=CODE`), player list, host controls, 2–12 players, guest play with emoji avatar.
+## 4. Painting (core mechanic)
 
-### Roles
-Auto ratio (~1 seeker per 3 players, min 1), reshuffled each round, animated role reveal.
+- **Eyedropper** — tap the world to sample the exact on-screen colour (with lighting/fog baked in).
+- **Brush** — drag directly on your own 3D body; 3 brush sizes; palette + full colour picker; fill-all bucket.
+- Painting allowed during hide **and** seek phases (repainting mid-hunt is legal but movement is the #1 tell).
+- *(Roadmap: metallic/roughness sliders, undo, saved swatches.)*
 
-### Phases
-- **Prep** (default 60s, 20–120s): hiders move/paint/pose; seekers see a waiting screen.
-- **Hunt** (default 120s, 30–240s): seekers tap-to-tag; hiders frozen. Ends early when all found.
+## 5. Roles & controls
 
-### Painting (core mechanic)
-- **Eyedropper** — tap the map to sample an exact surface color.
-- **Color wheel** — native color input per segment.
-- **Per-segment** painting (head / body / legs) + **Fill All**.
-- *(Roadmap: gradients, pattern stamps, opacity.)*
+- **Hider** (third-person): camera-relative move (WASD/joystick), jump, wall-flatten (E), whistle (1), paint by touch.
+- **Seeker** (first-person): move, jump, tap to shoot (1 s reload), 5 paint charges, out-of-paint = eliminated.
+- Caught hiders free-roam as spectators with a minimap of all players.
 
-### Poses
-Standing, crouching, flat *(roadmap: curled, hanging)* — pick a silhouette that matches nearby objects.
+## 6. Modes
 
-### Seeker
-Tap a doodler to tag. Hunt shapes, not just colors. *(Roadmap: optional suspicion hints.)*
-
-### Game modes
 - **Classic** — find all hiders before time runs out.
 - **Infection** — caught hiders join the seekers; last hider standing wins.
-- *(Roadmap: Blitz, Solo, Ranked.)*
+- *(Roadmap: Double — everyone hides, then everyone seeks.)*
 
-### Scoring & progression
+## 7. Scoring
+
 - Hider: +100 per round survived; partial credit by survival time if caught.
-- Seeker: +60 per tag + up to +40 early-tag time bonus; +100 for clearing everyone.
-- *(Roadmap: XP, levels, cosmetics — no pay-to-win.)*
+- Seeker: +60 per catch + up to +40 early-catch bonus; +100 split for clearing everyone.
 
-### Social
-Quick emoji reactions during hunt; toast notifications on tags. *(Roadmap: replays, spectator mode.)*
+## 8. UX / presentation
 
-### Host settings
-Map · Mode · Prep time · Hunt time · Rounds per session.
+Bright chunky party-game UI (rounded type, thick outlines, banners, confetti), role-reveal banners, tick-down timer, emotes, WebAudio SFX (whistle, shots, splats, fanfares). Portrait & landscape, 44 px+ tap targets, `touch-action: none` stage.
 
-## 6. Mobile UX
-Portrait-first, 44px+ tap targets, drag-to-move, tap-to-eyedrop, tap-to-tag, no keyboard required, `touch-action: none` on stage, works on weak networks.
+## 9. Technical
 
-## 7. Technical
-- Frontend: HTML5 Canvas + vanilla JS, no build step.
-- Multiplayer: Socket.io over WebSockets, server-authoritative state.
+- Frontend: Three.js (CDN importmap) + vanilla JS, no build step; BVH-accelerated collision raycasts.
+- Multiplayer: Socket.io, server-authoritative (roles, phases, catch validation, seeker HP, whistle clock, scoring).
 - Shared map definitions imported by client and server.
-- *(Roadmap: PWA install, reconnection, persistence.)*
 
-## 8. Out of scope (v1)
-Voice chat, custom map editor, monetization, native apps, 3D, accounts.
+## 10. Out of scope (v1)
 
-## 9. MVP (built)
-Room create/join · 3 maps · Classic + Infection · eyedropper + color wheel + per-segment + Fill All · 3 poses · tap-to-tag · scoring · round flow · mobile-responsive layout.
-
-## 10. Maps (v1)
-Living Room · Aquarium · Art Gallery.
+Voice chat, decoy clones, randomized prop placement, map editor/Workshop, accounts, monetization, native apps.
 
 ---
 
-*Sources researched: Meccha Chameleon (Steam), official how-to-play guides, and community wikis.*
+*Design reference researched from the Steam page, Wikipedia, EN/JP wikis and guides for Meccha Chameleon.*

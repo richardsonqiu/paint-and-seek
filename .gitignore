@@ -3,3 +3,5 @@ npm-debug.log*
 .DS_Store
 .env
 _e2e.mjs
+._*
+**/._*

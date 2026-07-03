@@ -13,12 +13,16 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused cha
 export { POSES };
 
 export const DEFAULT_SETTINGS = {
-  prepTime: 60,
-  huntTime: 120,
+  prepTime: 75,     // ~90s hide phase in the original; deliberately tight
+  huntTime: 180,
   map: DEFAULT_MAP_ID,
   mode: 'classic', // 'classic' | 'infection'
   rounds: 3,
+  whistle: true,   // hiders auto-whistle every 45s (manual whistle resets it)
 };
+
+export const SEEKER_HP = 5;       // missed shots cost health — no spam-shooting
+export const WHISTLE_EVERY = 45000;
 
 function blankBody(spawn) {
   return {
@@ -79,6 +83,9 @@ export class Room {
   seekers() {
     return this.activePlayers().filter((p) => p.role === 'seeker');
   }
+  activeSeekers() {
+    return this.seekers().filter((p) => !p.out);
+  }
 
   assignRoles() {
     const players = this.activePlayers();
@@ -101,6 +108,9 @@ export class Room {
     shuffled.forEach((p, i) => {
       p.role = i < seekerCount ? 'seeker' : 'hider';
       p.found = false;
+      p.hp = SEEKER_HP;            // seekers lose 1 per missed shot
+      p.out = false;               // seeker eliminated by too many misses
+      p.nextWhistle = 0;           // hider auto-whistle deadline (set at hunt start)
       const spawn = p.role === 'seeker'
         ? seekerSpawns[si++ % seekerSpawns.length]
         : hiderSpawns[hi++ % hiderSpawns.length];
@@ -174,6 +184,8 @@ export class Room {
         role: this.phase === 'lobby' ? null : p.role,
         score: p.score,
         found: p.found,
+        hp: p.hp,
+        out: p.out,
         isHost: p.id === this.hostId,
       })),
     };
@@ -205,6 +217,8 @@ export class RoomStore {
   delete(code) {
     const room = this.rooms.get(code);
     if (room && room._timer) clearTimeout(room._timer);
+    if (room && room._whistler) clearInterval(room._whistler);
+    if (room && room._pump) clearInterval(room._pump);
     this.rooms.delete(code);
   }
 }

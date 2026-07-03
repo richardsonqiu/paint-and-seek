@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import { RoomStore, POSES, clampToRoom } from './rooms.js';
+import { RoomStore, POSES, clampToRoom, SEEKER_HP, WHISTLE_EVERY } from './rooms.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -30,6 +30,23 @@ function broadcast(room) {
   for (const id of room.players.keys()) {
     io.to(id).emit('state', room.snapshot(id));
   }
+}
+
+// Movement updates arrive ~14×/s per player; broadcasting a full snapshot for
+// each one melted client frame rates. During the hunt they're coalesced into
+// a 10 Hz pump instead (events like tags/shots still broadcast immediately).
+function scheduleBroadcast(room) {
+  if (room.phase === 'hunt' && room._pump) { room._dirty = true; return; }
+  broadcast(room);
+}
+function startPump(room) {
+  room._dirty = false;
+  room._pump = setInterval(() => {
+    if (room._dirty) { room._dirty = false; broadcast(room); }
+  }, 100);
+}
+function stopPump(room) {
+  if (room._pump) { clearInterval(room._pump); room._pump = null; }
 }
 
 function clearTimer(room) {
@@ -57,12 +74,33 @@ function enterHunt(room) {
   clearTimer(room);
   room.phase = 'hunt';
   room.deadline = Date.now() + room.settings.huntTime * 1000;
+  // Arm the auto-whistle: every hider betrays their position every 45s unless
+  // they whistle manually first (which resets the countdown).
+  const now = Date.now();
+  for (const h of room.hiders()) h.nextWhistle = now + WHISTLE_EVERY;
+  if (room.settings.whistle) {
+    room._whistler = setInterval(() => tickWhistles(room), 1000);
+  }
+  startPump(room);
   broadcast(room);
   room._timer = setTimeout(() => endRound(room, 'time'), room.settings.huntTime * 1000);
 }
 
+function tickWhistles(room) {
+  if (room.phase !== 'hunt') return;
+  const now = Date.now();
+  for (const h of room.remainingHiders()) {
+    if (now >= h.nextWhistle) {
+      h.nextWhistle = now + WHISTLE_EVERY;
+      io.to(room.code).emit('whistle', { id: h.id, x: h.body.x, y: h.body.y || 0, z: h.body.z, auto: true });
+    }
+  }
+}
+
 function endRound(room, reason) {
   clearTimer(room);
+  if (room._whistler) { clearInterval(room._whistler); room._whistler = null; }
+  stopPump(room);
   room.phase = 'roundover';
 
   const survivors = room.remainingHiders();
@@ -79,7 +117,8 @@ function endRound(room, reason) {
     for (const s of room.seekers()) s.score += 100;
   }
 
-  room.deadline = Date.now() + 8000;
+  // 10s: ~3s gawking at the revealed hiding spots, then the scoreboard.
+  room.deadline = Date.now() + 10000;
   broadcast(room);
 
   const isLastRound = room.round >= room.settings.rounds;
@@ -92,12 +131,15 @@ function endRound(room, reason) {
     } else {
       startRound(room);
     }
-  }, 8000);
+  }, 10000);
 }
 
 function maybeEndEarly(room) {
-  if (room.phase === 'hunt' && room.remainingHiders().length === 0) {
-    endRound(room, 'allfound');
+  if (room.phase !== 'hunt') return;
+  if (room.remainingHiders().length === 0) endRound(room, 'allfound');
+  // Every seeker shot themselves dry — the hiders win outright.
+  else if (room.seekers().length > 0 && room.activeSeekers().length === 0) {
+    endRound(room, 'seekersout');
   }
 }
 
@@ -113,6 +155,7 @@ io.on('connection', (socket) => {
   };
 
   socket.on('create', ({ name, avatar }, cb) => {
+    cleanup();                       // leave any room we were already in
     const r = store.create();
     roomCode = r.code;
     socket.join(r.code);
@@ -124,6 +167,7 @@ io.on('connection', (socket) => {
   socket.on('join', ({ code, name, avatar }, cb) => {
     const r = store.get(code);
     if (!r) return cb && cb({ ok: false, error: 'Room not found' });
+    if (roomCode && roomCode !== r.code) cleanup(); // leave any previous room
     if (r.phase !== 'lobby') return cb && cb({ ok: false, error: 'Game already started' });
     if (r.players.size >= 12) return cb && cb({ ok: false, error: 'Room is full' });
     roomCode = r.code;
@@ -142,6 +186,7 @@ io.on('connection', (socket) => {
     if (typeof patch.rounds === 'number') s.rounds = clamp(patch.rounds, 1, 10);
     if (patch.map) s.map = patch.map;
     if (patch.mode) s.mode = patch.mode;
+    if (typeof patch.whistle === 'boolean') s.whistle = patch.whistle;
     broadcast(r);
   });
 
@@ -173,10 +218,10 @@ io.on('connection', (socket) => {
         body.paint.length <= MAX_PAINT_BYTES) {
       p.body.paint = body.paint;
     }
-    // During the hunt, seekers must see hiders move, so broadcast to everyone.
-    // During prep, only the actor needs the echo.
-    if (r.phase === 'hunt') broadcast(r);
-    else io.to(socket.id).emit('state', r.snapshot(socket.id));
+    // During the hunt, seekers must see hiders move — coalesced via the pump.
+    // During prep no echo is needed: the mover's own client renders its body
+    // locally, and nobody else can see hiders yet.
+    if (r.phase === 'hunt') scheduleBroadcast(r);
   });
 
   // Seeker tags a hider. The client raycasts the 3D scene and sends the
@@ -210,10 +255,12 @@ io.on('connection', (socket) => {
 
   // Seeker fires a paint blast at a world point. Splatters paint (visible to
   // everyone), catches any hider within the blast radius, and reloads for 1s.
+  // Meccha Chameleon's key balance rule: a MISSED shot costs the seeker
+  // health — run dry and you're eliminated. No spam-shooting every blob.
   socket.on('shoot', (data) => {
     const r = room();
     const p = me();
-    if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt' || !data) return;
+    if (!r || !p || p.role !== 'seeker' || p.out || r.phase !== 'hunt' || !data) return;
     if (typeof data.x !== 'number' || typeof data.z !== 'number') return;
     const now = Date.now();
     if (now - (p.lastShot || 0) < 1000) return; // 1s reload — no spam
@@ -222,7 +269,7 @@ io.on('connection', (socket) => {
     const y = typeof data.y === 'number' ? data.y : 0.5;
     io.to(r.code).emit('blast', { x: data.x, y, z: data.z, color });
 
-    let hit = null, best = 2.0; // blast radius (metres)
+    let hit = null, best = 1.4; // blast radius (metres)
     for (const h of r.hiders()) {
       if (h.found) continue;
       const d = Math.hypot(h.body.x - data.x, h.body.z - data.z);
@@ -234,11 +281,35 @@ io.on('connection', (socket) => {
       p.score += 60 + Math.round((msLeft / (r.settings.huntTime * 1000)) * 40);
       const elapsed = r.settings.huntTime * 1000 - msLeft;
       hit.score += Math.round((elapsed / (r.settings.huntTime * 1000)) * 50);
-      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
+      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; hit.hp = SEEKER_HP; }
       io.to(r.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
       broadcast(r);
       maybeEndEarly(r);
+    } else {
+      p.hp = Math.max(0, (p.hp == null ? SEEKER_HP : p.hp) - 1);
+      io.to(socket.id).emit('miss', { hp: p.hp });
+      if (p.hp <= 0) {
+        p.out = true;
+        io.to(r.code).emit('seekerout', { id: p.id, name: p.name });
+        broadcast(r);
+        maybeEndEarly(r);
+      } else {
+        broadcast(r);
+      }
     }
+  });
+
+  // Hider whistles on purpose (taunt) — betrays them now, but resets the 45s
+  // auto-whistle countdown, buying silence for when the seeker is close.
+  socket.on('whistle', () => {
+    const r = room();
+    const p = me();
+    if (!r || !p || p.role !== 'hider' || p.found || r.phase !== 'hunt') return;
+    const now = Date.now();
+    if (now - (p.lastWhistle || 0) < 2000) return;
+    p.lastWhistle = now;
+    p.nextWhistle = now + WHISTLE_EVERY;
+    io.to(r.code).emit('whistle', { id: p.id, x: p.body.x, y: p.body.y || 0, z: p.body.z, auto: false });
   });
 
   // Seeker reports its position (for spectators' minimaps). Privacy is handled
@@ -252,7 +323,7 @@ io.on('connection', (socket) => {
       p.body.x = cx; p.body.z = cz;
     }
     if (typeof ry === 'number') p.body.ry = ry;
-    broadcast(r);
+    scheduleBroadcast(r);
   });
 
   socket.on('emote', ({ emoji }) => {

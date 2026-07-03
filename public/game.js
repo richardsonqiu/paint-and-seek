@@ -1,12 +1,14 @@
-// Doodle Guys — 3D client (Three.js).
-// Loads Three from a CDN via the importmap in index.html (the player's
-// browser fetches it). Home/lobby are plain DOM; the game is a WebGL scene.
+// Meccha Doodlers — 3D client (Three.js).
+// A camouflage hide-and-seek party game à la Meccha Chameleon: hiders are
+// little chameleons that paint/blend themselves into the scenery; the seeker
+// hunts them down with a paint gun. Home/lobby are plain DOM; the game is a
+// WebGL scene.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js';
 
-// Accelerate raycasts (collision/floor/cling) with a BVH — the per-frame
+// Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -39,12 +41,59 @@ function toast(msg, ms = 1800) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
 }
-// A little person silhouette, white when alive / red when caught.
-function personIcon(color) {
-  return `<svg viewBox="0 0 24 24" width="22" height="22"><path fill="${color}" d="M12 12a4.6 4.6 0 1 0-4.6-4.6A4.6 4.6 0 0 0 12 12Zm0 1.8c-3.7 0-8.4 1.9-8.4 5.6V21h16.8v-1.6c0-3.7-4.7-5.6-8.4-5.6Z"/></svg>`;
+// A little chameleon head-count icon that flips white → red when caught
+// (the signature Meccha Chameleon HUD element).
+function lizardIcon(caught) {
+  const c = caught ? '#ff4d4d' : '#ffffff';
+  return `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="${c}" d="M4 13c0-4.4 3.6-8 8-8 3.6 0 6.7 2.4 7.7 5.7l.3 1.3c.6.2 1 .8 1 1.5 0 .9-.7 1.6-1.6 1.6h-.5c-1.3 2.9-4.2 4.9-7.4 4.9H8.5C6 20 4 18 4 15.5V13z"/><circle cx="15.5" cy="11" r="1.4" fill="${caught ? '#7a1020' : '#3a2c1a'}"/></svg>`;
 }
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ---- Sounds (tiny WebAudio synth — no assets) ----------------------------
+let AC = null;
+function ac() {
+  if (!AC && (window.AudioContext || window.webkitAudioContext)) {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(freq, dur = 0.12, { type = 'square', vol = 0.12, when = 0, slide = 0 } = {}) {
+  const a = ac(); if (!a) return;
+  const t0 = a.currentTime + when;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(a.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function noise(dur = 0.15, { vol = 0.14, when = 0, freq = 900 } = {}) {
+  const a = ac(); if (!a) return;
+  const t0 = a.currentTime + when;
+  const len = Math.floor(a.sampleRate * dur);
+  const buf = a.createBuffer(1, len, a.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = a.createBufferSource(); src.buffer = buf;
+  const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 0.8;
+  const g = a.createGain(); g.gain.value = vol;
+  src.connect(f).connect(g).connect(a.destination);
+  src.start(t0);
+}
+const SFX = {
+  click: () => tone(660, 0.06, { type: 'triangle', vol: 0.08 }),
+  tick: () => tone(880, 0.05, { type: 'square', vol: 0.06 }),
+  banner: () => { tone(523, 0.12, { type: 'triangle' }); tone(659, 0.12, { type: 'triangle', when: 0.11 }); tone(784, 0.2, { type: 'triangle', when: 0.22 }); },
+  blend: () => { noise(0.25, { freq: 2400, vol: 0.1 }); tone(1200, 0.22, { type: 'sine', vol: 0.07, slide: -900 }); },
+  shoot: () => tone(300, 0.14, { type: 'square', vol: 0.1, slide: -180 }),
+  splat: () => noise(0.18, { freq: 500, vol: 0.16 }),
+  caught: () => { tone(520, 0.12, { vol: 0.12 }); tone(390, 0.12, { when: 0.11, vol: 0.12 }); tone(260, 0.22, { when: 0.22, vol: 0.12 }); },
+  win: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, { type: 'triangle', when: i * 0.12 })); },
+};
+window.addEventListener('pointerdown', () => ac(), { once: true });
 
 // ---- Home ---------------------------------------------------------------
 function buildAvatars() {
@@ -53,23 +102,23 @@ function buildAvatars() {
     const b = document.createElement('button');
     b.textContent = a;
     if (a === chosenAvatar) b.classList.add('sel');
-    b.onclick = () => { chosenAvatar = a; buildAvatars(); };
+    b.onclick = () => { chosenAvatar = a; buildAvatars(); SFX.click(); };
     wrap.appendChild(b);
   });
 }
 function myInfo() {
-  const name = ($('nameInput').value || '').trim().slice(0, 12) || 'Doodler';
+  const name = ($('nameInput').value || '').trim().slice(0, 12) || 'Chameleon';
   return { name, avatar: chosenAvatar };
 }
 $('createBtn').onclick = () => socket.emit('create', myInfo(), (res) => {
-  if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; }
+  if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; SFX.banner(); }
 });
 $('joinBtn').onclick = () => doJoin($('codeInput').value);
 function doJoin(code) {
   code = (code || '').trim().toUpperCase();
   if (code.length < 4) { $('homeError').textContent = 'Enter a 4-letter code.'; return; }
   socket.emit('join', { code, ...myInfo() }, (res) => {
-    if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; }
+    if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; SFX.banner(); }
     else $('homeError').textContent = (res && res.error) || 'Could not join.';
   });
 }
@@ -80,7 +129,7 @@ $('startBtn').onclick = () => socket.emit('start');
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
   try {
-    if (navigator.share) await navigator.share({ title: 'Doodle Guys', text: `Join my game! Code: ${snap.code}`, url });
+    if (navigator.share) await navigator.share({ title: 'Meccha Doodlers', text: `Join my game! Code: ${snap.code}`, url });
     else { await navigator.clipboard.writeText(url); toast('Link copied!'); }
   } catch (_) {}
 };
@@ -95,6 +144,7 @@ function buildMapSelect() {
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
+$('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value === 'on' }));
 
 function renderLobby() {
   $('lobbyCode').textContent = snap.code;
@@ -107,12 +157,13 @@ function renderLobby() {
   $('guestWait').classList.toggle('hidden', isHost);
   $('startBtn').classList.toggle('hidden', !isHost);
   $('startBtn').disabled = !(isHost && snap.players.length >= 1);
-  $('lobbyHint').textContent = snap.players.length < 1 ? 'Need at least 1 player to start.' : '';
+  $('lobbyHint').textContent = snap.players.length < 2 ? 'Best with friends — share the code! (You can solo-test too.)' : '';
   if (isHost) {
     buildMapSelect();
     $('mapSelect').value = snap.settings.map; $('modeSelect').value = snap.settings.mode;
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
+    $('whistleSelect').value = snap.settings.whistle === false ? 'off' : 'on';
   }
 }
 
@@ -124,8 +175,10 @@ let roomGroup = null, builtMapId = null;
 let collisionBoxes = [];            // solid AABBs for wall/landmark collision (Kenney maps)
 let collisionMeshes = [];           // meshes raycast for collision (scene GLBs)
 // Mesh names that should NOT block movement (glass doors/partitions, curtains,
-// mirrors, windows) — so the doodler can move freely between rooms.
-const PASSTHROUGH = /glass|vidro|cortina|curtain|espelho|mirror|janela|window/i;
+// mirrors, windows, doors) — so players can move freely between rooms. Door
+// meshes are also hidden entirely: a closed door would seal off a room.
+const PASSTHROUGH = /glass|vidro|cortina|curtain|espelho|mirror|janela|window|door|porta\b/i;
+const REMOVE = /\bdoor|\bporta\b/i;   // closed doors: remove from the scene
 const charGroups = new Map();       // hider id -> Group (hunt phase)
 let myChar = null;                  // hider's own Group (prep)
 let threeReady = false;
@@ -144,7 +197,7 @@ function modelUrl(kit, name) {
 // for full-resolution scene textures.
 function loadModelByUrl(url, pointFilter, castShadow = true) {
   if (!modelCache.has(url)) {
-    modelCache.set(url, new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
       gltfLoader.load(url, (gltf) => {
         const proto = gltf.scene;
         proto.traverse((o) => {
@@ -160,7 +213,14 @@ function loadModelByUrl(url, pointFilter, castShadow = true) {
         });
         resolve(proto);
       }, undefined, reject);
-    }));
+    });
+    // Never cache a failure — a lost fetch must not leave the world empty
+    // for the rest of the session.
+    p.catch((e) => {
+      console.warn('model load failed, will retry on next request:', url, e);
+      if (modelCache.get(url) === p) modelCache.delete(url);
+    });
+    modelCache.set(url, p);
   }
   return modelCache.get(url);
 }
@@ -171,9 +231,15 @@ function loadModel(kit, name) { return loadModelByUrl(modelUrl(kit, name), true)
 // (scale so the footprint's longest side == `fit`), centre it on (x,z) and drop
 // its base to the ground.
 async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 30, yOff = 0, solid = false, collide = false } = {}) {
-  let proto;
-  // Scene GLBs are high-poly + baked-lit, so skip them in the shadow pass (big FPS win).
-  try { proto = await loadModelByUrl(encodeURI('/models/' + file), false, false); } catch (_) { return null; }
+  let proto = null;
+  // Scene GLBs are high-poly + baked-lit, so skip them in the shadow pass (big
+  // FPS win). Retry a couple of times — one dropped fetch must not leave a
+  // hole in the map.
+  for (let attempt = 0; attempt < 3 && !proto; attempt++) {
+    try { proto = await loadModelByUrl(encodeURI('/models/' + file), false, false); }
+    catch (_) { await new Promise((r) => setTimeout(r, 700 * (attempt + 1))); }
+  }
+  if (!proto) { console.warn('scene failed to load after retries:', file); return null; }
   const inst = proto.clone(true);
   inst.rotation.set(rotX, rot, 0);
   inst.updateMatrixWorld(true);
@@ -202,11 +268,12 @@ async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 
     const b = new THREE.Box3().setFromObject(inst);
     collisionBoxes.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z });
   }
-  // Per-mesh collision: walk into walls/objects and stick against them.
-  // Per-mesh collision — but glass partitions / doors / curtains are left
-  // pass-through so you can move freely between rooms.
-  if (collide) inst.traverse((o) => {
-    if (o.isMesh && !PASSTHROUGH.test(o.name)) {
+  // Per-mesh collision — but glass partitions / curtains are pass-through and
+  // closed doors are removed outright, so you can move freely between rooms.
+  inst.traverse((o) => {
+    if (!o.isMesh) return;
+    if (REMOVE.test(o.name)) { o.visible = false; return; }
+    if (collide && !PASSTHROUGH.test(o.name)) {
       try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
       collisionMeshes.push(o);
     }
@@ -229,6 +296,14 @@ async function placeModel(group, kit, name, { x = 0, z = 0, rot = 0, scale = 1, 
   if (solid) {
     collisionBoxes.push({ minX: x + box.min.x, maxX: x + box.max.x, minZ: z + box.min.z, maxZ: z + box.max.z });
   }
+  // Kit props are solid, climbable cover: every mesh gets collision (this is
+  // what stops you walking straight through furniture that had no AABB).
+  inst.traverse((o) => {
+    if (o.isMesh && !PASSTHROUGH.test(o.name)) {
+      try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
+      collisionMeshes.push(o);
+    }
+  });
   return inst;
 }
 
@@ -250,30 +325,34 @@ function mulberry32(seed) {
   };
 }
 
-const cam = { yaw: 0, pitch: 0.4 };       // shared look angles
-const TP = { dist: 0.9, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
+const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
+const TP = { dist: 1.6, pitchMin: -0.9, pitchMax: 1.25 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
-const MOVE_SPEED = 5.0;                    // seeker (full-size hunter)
-// Hiders are tiny — ~1/6 the size of the seekers and the world's props — so
-// they can nestle into and behind the scenery like a real chameleon.
-const HIDER_SCALE = 1 / 6;
-const HIDER_MOVE_SPEED = 2.0;              // scaled down so they scurry, not blur
+const MOVE_SPEED = 5.4;                    // seeker (full-size hunter)
+// Hiders are smaller than the seeker so they can tuck behind the scenery —
+// but big enough that a painted one is still spottable (~0.7m tall).
+const HIDER_SCALE = 0.38;
+const HIDER_MOVE_SPEED = 3.3;
 
 function initThree() {
   if (threeReady) return;
   const canvas = $('stage');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // cap for FPS
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25)); // cap for FPS
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap; // cheaper than PCFSoft, near-identical here
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(70, 1, 0.1, 300);
+  camera = new THREE.PerspectiveCamera(70, 1, 0.05, 300);
   raycaster = new THREE.Raycaster();
   clock = new THREE.Clock();
 
-  // Sky-and-ground ambient + a warm sun that casts shadows.
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a5a, 1.0));
+  // Sky-and-ground ambient + a warm sun that casts shadows. The ground bounce
+  // is kept near-neutral so the white mannequin reads as white, not green.
+  // Slightly over-lit on purpose: the baked apartment interiors have very
+  // dark corners that are unfair hiding spots on phone screens.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8d8b82, 1.35));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
   sunLight = new THREE.DirectionalLight(0xfff4e0, 1.6);
   sunLight.position.set(18, 30, 14);
   sunLight.castShadow = true;
@@ -315,7 +394,7 @@ function buildScene(mapId) {
   // Ground: a generous plane (a bit larger than the play area so the edges
   // disappear into the fog) that receives shadows. It's nudged just below y=0
   // and uses polygon offset so it never z-fights the building floors that sit
-  // on top of it (that was the jagged shimmer at the floor edges).
+  // on top of it.
   const groundMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(map.ground), roughness: 1.0, metalness: 0.0,
     polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
@@ -385,6 +464,7 @@ function buildConnector(group, c) {
     wall.position.set(mx + perpx * (w / 2) * side, h / 2, mz + perpz * (w / 2) * side);
     wall.rotation.y = ang; wall.castShadow = true; wall.receiveShadow = true;
     group.add(wall);
+    try { wall.geometry.computeBoundsTree(); } catch (_) {}
     collisionMeshes.push(wall);
   }
 }
@@ -483,24 +563,22 @@ function placeWallSeg(group, proto, scale, x, baseY, z, rotY) {
   collisionBoxes.push({ minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z });
 }
 
-// ---- Doodler character (humanoid) + paintable skin texture --------------
-// Every doodler shares one geometry set whose UVs are packed into distinct
-// regions of a 512² atlas, so a single canvas texture covers head, body,
-// arms, hands, legs and feet — and a raycast onto any part gives the exact
-// texel to paint.
+// ---- Chameleon character + paintable skin texture ------------------------
+// The hider is Meccha Chameleon's icon: a plain WHITE bipedal chameleon
+// mannequin. You paint it by hand to blend in — there's no auto-camouflage;
+// "invisibility" is pure paint skill. Every chameleon shares one geometry set
+// whose UVs are packed into distinct regions of a 512² atlas, so a single
+// canvas texture covers the whole body — and a raycast onto any part gives the
+// exact texel to paint. The googly eyes use a separate (unpainted) material.
 const ATLAS = 512;
 // Region rects [x0, y0, x1, y1] in UV space (y measured from the bottom).
 const REGIONS = {
   head:  [0.00, 0.50, 0.50, 1.00],
   torso: [0.50, 0.50, 1.00, 1.00],
-  armL:  [0.00, 0.25, 0.25, 0.50],
-  armR:  [0.25, 0.25, 0.50, 0.50],
-  legL:  [0.00, 0.00, 0.25, 0.25],
-  legR:  [0.25, 0.00, 0.50, 0.25],
-  handL: [0.50, 0.375, 0.625, 0.50],
-  handR: [0.625, 0.375, 0.75, 0.50],
-  footL: [0.50, 0.25, 0.625, 0.375],
-  footR: [0.625, 0.25, 0.75, 0.375],
+  armL:  [0.00, 0.25, 0.50, 0.50],
+  armR:  [0.50, 0.25, 1.00, 0.50],
+  legL:  [0.00, 0.00, 0.50, 0.25],
+  legR:  [0.50, 0.00, 1.00, 0.25],
 };
 
 function remapUV(geo, region) {
@@ -512,81 +590,86 @@ function remapUV(geo, region) {
     uv.setXY(i, x0 + u * (x1 - x0), y0 + v * (y1 - y0));
   }
   uv.needsUpdate = true;
+  return geo;
 }
 
-// A little flattened-oval foot (rounded, not a box).
-function roundedFoot() { const g = new THREE.SphereGeometry(0.15, 16, 12); g.scale(1, 0.5, 1.45); return g; }
+// Base (unscaled) mannequin height ~1.9; the model faces +Z.
+const CHAR_LEN = 1.9;
 
-let humanoidGeos = null;
-function buildHumanoidGeos() {
-  if (humanoidGeos) return humanoidGeos;
-  const mk = (geo, region) => { remapUV(geo, REGIONS[region]); return geo; };
-  // Chunky, smooth, rounded proportions (à la the "Hidden in Plain Sight" toy):
-  // big round head, fat barrel torso, thick rounded limbs that overlap so the
-  // joints blend, little oval feet. High segment counts keep it smooth.
-  humanoidGeos = {
-    head:  { geo: mk(new THREE.SphereGeometry(0.37, 30, 22), 'head') },
-    torso: { geo: mk(new THREE.CapsuleGeometry(0.34, 0.46, 10, 28), 'torso') },
-    armL:  { geo: mk(new THREE.CapsuleGeometry(0.13, 0.46, 8, 18), 'armL') },
-    armR:  { geo: mk(new THREE.CapsuleGeometry(0.13, 0.46, 8, 18), 'armR') },
-    handL: { geo: mk(new THREE.SphereGeometry(0.135, 16, 14), 'handL') },
-    handR: { geo: mk(new THREE.SphereGeometry(0.135, 16, 14), 'handR') },
-    legL:  { geo: mk(new THREE.CapsuleGeometry(0.165, 0.34, 8, 18), 'legL') },
-    legR:  { geo: mk(new THREE.CapsuleGeometry(0.165, 0.34, 8, 18), 'legR') },
-    footL: { geo: mk(roundedFoot(), 'footL') },
-    footR: { geo: mk(roundedFoot(), 'footR') },
+let charGeos = null;
+function buildCharGeos() {
+  if (charGeos) return charGeos;
+  const mk = (geo, region) => remapUV(geo, REGIONS[region]);
+  // Smooth, blobby, featureless proportions — like the 3D-printed Meccha
+  // Chameleon figures: a big round head melting straight into a fat torso
+  // (no neck), thick rounded limbs with no separate hands or feet.
+  const head = new THREE.SphereGeometry(0.40, 32, 24);
+  head.scale(0.96, 1.04, 0.96);
+  charGeos = {
+    head:  mk(head, 'head'),
+    torso: mk(new THREE.CapsuleGeometry(0.37, 0.52, 12, 30), 'torso'),
+    armL:  mk(new THREE.CapsuleGeometry(0.14, 0.5, 8, 20), 'armL'),
+    armR:  mk(new THREE.CapsuleGeometry(0.14, 0.5, 8, 20), 'armR'),
+    legL:  mk(new THREE.CapsuleGeometry(0.175, 0.4, 8, 20), 'legL'),
+    legR:  mk(new THREE.CapsuleGeometry(0.175, 0.4, 8, 20), 'legR'),
   };
-  return humanoidGeos;
+  return charGeos;
 }
 
 // Joint pivot heights (local, before HIDER_SCALE).
-const HIP_Y = 0.6;       // waist / hip pivot
-const SHO_Y = 1.2;       // shoulder pivot
+const HIP_Y = 0.62;      // waist / hip pivot
+const SHO_Y = 1.22;      // shoulder pivot
 
-// Build a doodler as a small rig: a waist-pivoted upper body (with shoulder
-// pivots for the arms) and hip-pivoted legs, so postures can bend at the
-// joints. Each doodler gets its own canvas/texture/material (per-player paint)
-// but shares the cached geometry.
+// Build the mannequin as a small rig: a waist-pivoted upper body (with
+// shoulder pivots for the arms) and hip-pivoted legs, so poses can bend at
+// the joints. Each player gets its own canvas/texture/material (per-player
+// paint) but shares the cached geometry.
 function buildCharacter(paintUrl) {
   const grp = new THREE.Group();
+  grp.rotation.order = 'YXZ'; // yaw first, then pose pitch
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = ATLAS;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, ATLAS, ATLAS);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, ATLAS, ATLAS);  // plain white!
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.0 });
 
-  const geos = buildHumanoidGeos();
-  const mesh = (name, x, y, z = 0) => {
-    const m = new THREE.Mesh(geos[name].geo, material);
+  const G = buildCharGeos();
+  const mesh = (geo, x, y, z = 0) => {
+    const m = new THREE.Mesh(geo, material);
     m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
     return m;
   };
   const pivot = (x, y, z = 0) => { const p = new THREE.Group(); p.position.set(x, y, z); return p; };
 
-  // Upper body rotates at the waist. Parts overlap so the joints blend smoothly.
+  // Upper body rotates at the waist. The head sits straight on the torso —
+  // overlapping spheres blend into one smooth silhouette.
   const upper = pivot(0, HIP_Y, 0);
-  upper.add(mesh('torso', 0, 0.92 - HIP_Y), mesh('head', 0, 1.55 - HIP_Y));
-  const armL = pivot(-0.40, SHO_Y - HIP_Y, 0);
-  armL.add(mesh('armL', 0, 0.90 - SHO_Y), mesh('handL', 0, 0.56 - SHO_Y));
-  const armR = pivot(0.40, SHO_Y - HIP_Y, 0);
-  armR.add(mesh('armR', 0, 0.90 - SHO_Y), mesh('handR', 0, 0.56 - SHO_Y));
+  upper.add(mesh(G.torso, 0, 0.95 - HIP_Y));
+  upper.add(mesh(G.head, 0, 1.5 - HIP_Y));
+  const armL = pivot(-0.42, SHO_Y - HIP_Y, 0);
+  armL.add(mesh(G.armL, 0, 0.88 - SHO_Y));
+  const armR = pivot(0.42, SHO_Y - HIP_Y, 0);
+  armR.add(mesh(G.armR, 0, 0.88 - SHO_Y));
   upper.add(armL, armR);
 
   // Legs rotate at the hips.
-  const legL = pivot(-0.15, HIP_Y, 0);
-  legL.add(mesh('legL', 0, 0.40 - HIP_Y), mesh('footL', 0, 0.05 - HIP_Y, 0.06));
-  const legR = pivot(0.15, HIP_Y, 0);
-  legR.add(mesh('legR', 0, 0.40 - HIP_Y), mesh('footR', 0, 0.05 - HIP_Y, 0.06));
+  const legL = pivot(-0.17, HIP_Y, 0);
+  legL.add(mesh(G.legL, 0, 0.38 - HIP_Y));
+  const legR = pivot(0.17, HIP_Y, 0);
+  legR.add(mesh(G.legR, 0, 0.38 - HIP_Y));
 
   grp.add(upper, legL, legR);
-  grp.userData = { canvas, ctx, texture, material, paintUrl: null, joints: { upper, armL, armR, legL, legR } };
+  grp.userData = {
+    canvas, ctx, texture, material, paintUrl: null,
+    joints: { upper, armL, armR, legL, legR },
+  };
   if (paintUrl) applyPaintUrl(grp, paintUrl);
   return grp;
 }
 
-// Paint a remote doodler's skin from a data-URL (drawn onto its own canvas).
+// Paint a remote chameleon's skin from a data-URL (drawn onto its own canvas).
 function applyPaintUrl(grp, url) {
   if (!url || grp.userData.paintUrl === url) return;
   grp.userData.paintUrl = url;
@@ -600,8 +683,11 @@ function applyPaintUrl(grp, url) {
   img.src = url;
 }
 
-// Pose the rig. The caller positions the group using userData.baseY.
-// Every doodler is a (tiny) hider, so the base scale is HIDER_SCALE.
+// Pose the rig. Poses are half the camouflage (break the humanoid silhouette
+// to imitate props). The set matches the classic Meccha Chameleon figure
+// poses: cheer, hands-on-head, zombie, kneel, lie flat, ball, starfish — plus
+// 'climb', the wall-flatten "picture frame trick" (back against the wall,
+// spread wide, ry = facing OUT of the wall).
 function setPose(g, pose) {
   const S = HIDER_SCALE;
   const j = g.userData.joints;
@@ -611,36 +697,39 @@ function setPose(g, pose) {
   j.armL.rotation.set(0, 0, 0); j.armR.rotation.set(0, 0, 0);
   j.legL.rotation.set(0, 0, 0); j.legR.rotation.set(0, 0, 0);
 
-  // The 8 poses (à la "Hidden in Plain Sight"). Arms hang -Y from the shoulder
-  // pivots; rotation.x ~ PI swings them up, rotation.z spreads them out.
   switch (pose) {
     case 'cheer':                     // both arms up in a V
-      j.armL.rotation.set(2.7, 0, -0.45); j.armR.rotation.set(2.7, 0, 0.45);
+      j.armL.rotation.set(2.7, 0, -0.5); j.armR.rotation.set(2.7, 0, 0.5);
       break;
-    case 'head':                      // hands on head (arms up & inward)
-      j.armL.rotation.set(2.7, 0, 0.8); j.armR.rotation.set(2.7, 0, -0.8);
+    case 'head':                      // hands on head
+      j.armL.rotation.set(2.7, 0, 0.85); j.armR.rotation.set(2.7, 0, -0.85);
       break;
-    case 'wide':                      // star: arms & legs spread
-      j.armL.rotation.z = -1.3; j.armR.rotation.z = 1.3;
-      j.legL.rotation.z = -0.45; j.legR.rotation.z = 0.45;
+    case 'zombie':                    // lean forward, arms out straight
+      j.upper.rotation.x = 0.42;
+      j.armL.rotation.x = 1.35; j.armR.rotation.x = 1.35;
       break;
-    case 'wave':                      // one arm up, leaning
-      j.armR.rotation.set(2.8, 0, -0.2);
-      j.upper.rotation.z = -0.12;
+    case 'kneel':                     // sit on folded legs
+      j.legL.rotation.x = -2.5; j.legR.rotation.x = -2.5;
+      j.armL.rotation.x = 0.25; j.armR.rotation.x = 0.25;
+      g.userData.baseY = -0.24 * S;
       break;
-    case 'ball':                      // curl into a round ball
+    case 'flat':                      // lie flat on the back, straight
+      g.rotation.x = -Math.PI / 2; g.userData.baseY = 0.38 * S;
+      break;
+    case 'ball':                      // curl into a round ball, face down
       j.upper.rotation.x = 1.7;
       j.armL.rotation.set(-1.5, 0, 0.35); j.armR.rotation.set(-1.5, 0, -0.35);
       j.legL.rotation.x = -1.7; j.legR.rotation.x = -1.7;
       g.userData.baseY = 0.15 * S;
       break;
-    case 'flat':                      // lie flat on the ground
-      g.rotation.x = Math.PI / 2; g.userData.baseY = 0.4 * S;
+    case 'star':                      // starfish flat on the floor, face down
+      g.rotation.x = Math.PI / 2; g.userData.baseY = 0.38 * S;
+      j.armL.rotation.set(2.6, 0, -0.75); j.armR.rotation.set(2.6, 0, 0.75);
+      j.legL.rotation.z = -0.55; j.legR.rotation.z = 0.55;
       break;
-    case 'kneel':                     // kneel / sit low
-      g.scale.set(S, S * 0.62, S);
-      j.legL.rotation.x = 0.5; j.legR.rotation.x = 0.5;
-      j.armL.rotation.x = 0.4; j.armR.rotation.x = 0.4;
+    case 'climb':                     // flattened on a wall, spread-eagle
+      j.armL.rotation.z = -2.35; j.armR.rotation.z = 2.35;
+      j.legL.rotation.z = -0.5; j.legR.rotation.z = 0.5;
       break;
     // 'standing' uses the clean reset above.
   }
@@ -654,8 +743,8 @@ function setFound(g, found) {
 }
 
 function ensureMyChar(body) {
-  if (!myChar) { myChar = buildCharacter(body.paint || null); scene.add(myChar); }
-  setPose(myChar, body.pose);
+  if (!myChar) { myChar = buildCharacter(body.paint || null); scene.add(myChar); myChar.userData.pose = null; }
+  if (myChar.userData.pose !== body.pose) { setPose(myChar, body.pose); myChar.userData.pose = body.pose; }
   myChar.position.set(body.x, (body.y || 0) + (myChar.userData.baseY || 0), body.z);
   myChar.rotation.y = body.ry || 0;
 }
@@ -670,22 +759,64 @@ function syncHunt(bodies, skipMine) {
     if (!g) {
       g = buildCharacter(b.paint);
       g.userData.hiderId = b.id;
+      g.userData.pose = 'standing';
       scene.add(g); charGroups.set(b.id, g);
     }
     applyPaintUrl(g, b.paint);
-    setPose(g, b.pose);
-    g.position.set(b.x, (b.y || 0) + (g.userData.baseY || 0), b.z);
-    g.rotation.y = b.ry || 0;       // setPose set rotation.x; keep yaw too
+    if (g.userData.pose !== b.pose) { setPose(g, b.pose); g.userData.pose = b.pose; }
+    // Snapshots arrive ~10×/s; store the target and glide there per-frame in
+    // updateRemoteAnims so remote players move at full frame rate.
+    const ty = (b.y || 0) + (g.userData.baseY || 0);
+    if (!g.userData.init) { g.position.set(b.x, ty, b.z); g.rotation.y = b.ry || 0; g.userData.init = true; }
+    g.userData.tgt = { x: b.x, y: ty, z: b.z, ry: b.ry || 0 };
     setFound(g, b.found);
   }
   for (const [id, g] of [...charGroups]) {
     if (!seen.has(id)) { scene.remove(g); charGroups.delete(id); }
   }
 }
+
+// Per-frame life: glide remote players toward their network targets, swing
+// their limbs while they travel, and give everyone a subtle idle breath.
+// The local hider also gets a stretch in the air (snappy cartoon jump).
+function updateRemoteAnims(dt, t) {
+  const k = Math.min(1, dt * 11);
+  for (const [, g] of charGroups) {
+    const tgt = g.userData.tgt;
+    if (!tgt) continue;
+    const px = g.position.x, pz = g.position.z;
+    g.position.x += (tgt.x - g.position.x) * k;
+    g.position.y += (tgt.y - g.position.y) * k;
+    g.position.z += (tgt.z - g.position.z) * k;
+    g.rotation.y += angleDelta(g.rotation.y, tgt.ry) * k;
+    if ((g.userData.pose || 'standing') !== 'standing') continue;
+    const j = g.userData.joints;
+    const speed = Math.hypot(g.position.x - px, g.position.z - pz) / Math.max(dt, 0.001);
+    if (speed > 0.25) {
+      g.userData.wp = (g.userData.wp || 0) + dt * (6 + speed * 3.5);
+      const a = Math.sin(g.userData.wp) * 0.5;
+      j.legL.rotation.x = a; j.legR.rotation.x = -a;
+      j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
+    } else if (g.userData.wp) {
+      g.userData.wp = 0;
+      j.legL.rotation.x = j.legR.rotation.x = 0;
+      j.armL.rotation.x = j.armR.rotation.x = 0;
+    }
+    j.upper.scale.y = 1 + Math.sin(t * 2.1 + (g.userData.hiderId || '').length) * 0.015;
+  }
+  if (myChar && myBody && !climbing && myBody.pose === 'standing') {
+    const j = myChar.userData.joints;
+    j.upper.scale.y = 1 + Math.sin(t * 2.1) * 0.015;
+    const vy = myBody.vy || 0;
+    const stretch = Math.abs(vy) > 0.6 ? clamp(1 + vy * 0.02, 0.88, 1.14) : 1;
+    myChar.scale.y += (HIDER_SCALE * stretch - myChar.scale.y) * Math.min(1, dt * 14);
+  }
+}
 function clearChars() {
   for (const [, g] of charGroups) scene.remove(g);
   charGroups.clear();
 }
+const _v3 = new THREE.Vector3();
 
 // ---- Free-form painting -------------------------------------------------
 let lastDab = null;
@@ -708,7 +839,7 @@ function paintAtUV(uv) {
   paintDirtyForSync = true;
   sendTexture(false);
 }
-// Raycast a screen point onto my doodler; paint if it lands on the body.
+// Raycast a screen point onto my chameleon; paint if it lands on the body.
 function paintRaycast(clientX, clientY) {
   if (!myChar) return false;
   raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
@@ -723,10 +854,63 @@ function fillAll() {
   ctx.fillStyle = brushColor; ctx.fillRect(0, 0, ATLAS, ATLAS);
   myChar.userData.texture.needsUpdate = true;
   sendTexture(true);
+  SFX.splat();
+}
+
+// ---- WHISTLE: the anti-camping heartbeat ----------------------------------
+// Every hider auto-whistles every 45s (server-driven), betraying their rough
+// position by SOUND. Whistling manually resets that countdown — so you whistle
+// on purpose while the seeker is far away to stay silent when it's near.
+const WHISTLE_EVERY_MS = 45000;
+let myWhistleDeadline = 0;      // local mirror of the server countdown
+
+function sendWhistle() {
+  if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'hider' || iAmFound()) return;
+  socket.emit('whistle');
+}
+
+// Spatialised-ish playback: volume by distance, stereo pan by direction
+// relative to the camera. Seekers hunt by EAR — there's no visual marker.
+function playWhistle(x, y, z) {
+  const a = ac(); if (!a) return;
+  const lp = camera ? camera.position : { x: 0, y: 0, z: 0 };
+  const d = Math.hypot(x - lp.x, (y || 0) - lp.y, z - lp.z);
+  const vol = clamp(0.35 / (1 + d * 0.12), 0.02, 0.35);
+  // Pan by the direction to the source in camera space.
+  let pan = 0;
+  if (camera) {
+    _v3.set(x, y || 0, z).sub(camera.position);
+    const right = _v3b.setFromMatrixColumn(camera.matrixWorld, 0);
+    pan = clamp(_v3.normalize().dot(right.normalize()), -1, 1) * 0.8;
+  }
+  const t0 = a.currentTime;
+  const mk = (f0, f1, start, dur) => {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f0, t0 + start);
+    o.frequency.exponentialRampToValueAtTime(f1, t0 + start + dur);
+    g.gain.setValueAtTime(vol, t0 + start);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + start + dur);
+    let out = g;
+    if (a.createStereoPanner) { const p = a.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
+    o.connect(g); out.connect(a.destination);
+    o.start(t0 + start); o.stop(t0 + start + dur + 0.02);
+  };
+  mk(880, 1500, 0, 0.18);      // fweee…
+  mk(1500, 700, 0.2, 0.25);    // …fwooo
+}
+const _v3b = new THREE.Vector3();
+function worldToScreen(pos) {
+  const r = canvas.getBoundingClientRect();
+  const p = _v3.copy(pos).project(camera);
+  if (p.z > 1) return null;
+  return { x: r.left + (p.x * 0.5 + 0.5) * r.width, y: r.top + (-p.y * 0.5 + 0.5) * r.height };
 }
 
 // ---- Camera + movement --------------------------------------------------
 function forwardXZ(yaw) { return { x: Math.sin(yaw), z: Math.cos(yaw) }; }
+function lerpAngle(a, b, t) { return a + angleDelta(a, b) * t; }
+function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
 
 function bounds() {
   const map = snap && MAPS[snap.mapId];
@@ -760,46 +944,95 @@ const _rc = new THREE.Raycaster();
 _rc.firstHitOnly = true; // BVH fast path — we only need the nearest hit
 const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _nrm = new THREE.Vector3();
 function castDist(x, y, z, dx, dz) {
-  _ro.set(x, y, z); _rd.set(dx, 0, dz);
+  _ro.set(x, y, z); _rd.set(dx, 0, dz).normalize();
   _rc.set(_ro, _rd); _rc.far = 6;
   const hits = _rc.intersectObjects(collisionMeshes, true);
   return hits.length ? hits[0].distance : Infinity;
 }
-function slideMove(px, pz, nx, nz, y, rad) {
+// Move with wall-sliding, testing at ankle AND mid-body height so skirting
+// boards / thin sills don't wedge the actor.
+function slideMove(px, pz, nx, nz, y, rad, midY) {
   if (!collisionMeshes.length) return [nx, nz];
+  const my = midY == null ? y + 0.25 : midY;
+  const pass = (fx, fz, tx, tz) => Math.min(
+    castDist(fx, y, fz, tx, tz), castDist(fx, my, fz, tx, tz));
   const dx = nx - px, dz = nz - pz;
   if (dx !== 0) {
-    const s = Math.sign(dx), d = castDist(px, y, pz, s, 0);
+    const s = Math.sign(dx), d = pass(px, pz, s, 0);
     if (d < Math.abs(dx) + rad) nx = px + s * Math.max(0, d - rad);
   }
   if (dz !== 0) {
-    const s = Math.sign(dz), d = castDist(nx, y, pz, 0, s);
+    const s = Math.sign(dz), d = pass(nx, pz, 0, s);
     if (d < Math.abs(dz) + rad) nz = pz + s * Math.max(0, d - rad);
   }
   return [nx, nz];
 }
 
-// ---- Jumping & clinging -------------------------------------------------
-const GRAVITY = 22, JUMP_VEL = 7, CLING_RANGE = 2.4, TURN_RATE = 2.6;
-const ROOF = 2.0; // ceiling cap (below wall height) so you can't climb/jump over the walls into the sky
-const CLING_GAP = 0.06;  // how close the doodler sits to the clung surface (flush)
-const CLING_REACH = 0.5; // re-stick range: detach promptly once the surface ends (no flying)
-let jumpRequested = false, clinging = false, nearSurface = false;
+// ---- Jumping & climbing ---------------------------------------------------
+// Snappy arcade jump: strong gravity + strong impulse = quick, punchy arc
+// (~1.15m apex in ~0.55s round trip) instead of the old floaty drift.
+const GRAVITY = 32, JUMP_VEL = 8.6, CLING_RANGE = 1.2, ROOF = 2.6;
+const CLING_GAP = 0.12;  // half the body's depth — flush without clipping in
+const CLING_REACH = 0.5; // re-stick range: detach promptly once the surface ends
+const JUMP_BUFFER_MS = 160; // press slightly early and it still fires on landing
+let jumpAskedAt = 0, climbing = false, nearSurface = false, climbMiss = 0;
+function wantJump() { return performance.now() - jumpAskedAt < JUMP_BUFFER_MS; }
+function consumeJump() { jumpAskedAt = 0; }
 
-function angleDelta(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
-
-// Push a point out of any wall/object it's overlapping (so you can never end up
-// inside geometry). Casts short rays on the 4 axes and shoves out.
+// Push a point out of any wall/object it's overlapping (so you can never end
+// up inside geometry). The per-frame version casts only the 4 cardinal rays
+// at one height — cheap; spawn checks use the full 8-direction sweep.
+const DEPEN_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.707, 0.707], [-0.707, 0.707], [0.707, -0.707], [-0.707, -0.707]];
 function depenetrate(p, rayY, rad) {
   if (!collisionMeshes.length) return;
-  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const d = castDist(p.x, rayY, p.z, dx, dz);
+  for (let i = 0; i < 4; i++) {
+    const [dx, dz] = DEPEN_DIRS[i];
+    const d = castDist(p.x, rayY + 0.12, p.z, dx, dz);
     if (d < rad) { p.x -= dx * (rad - d + 0.01); p.z -= dz * (rad - d + 0.01); }
   }
 }
 
-// Is there a building floor under (x,z)? Used to keep players ON the floors and
-// out of the surrounding void (anti-escape).
+// Is (x,z) a clear spot (no wall within `rad`, floor under it, headroom to
+// stand)? Used to fix bad spawns — never start wedged inside furniture.
+function isClear(x, y, z, rad) {
+  if (!hasFloor(x, z, y)) return false;
+  const gy = groundUnder(x, y + 0.4, z);
+  if (clearanceAbove(x, gy, z) < MIN_HEADROOM_HIDER) return false;
+  for (const [dx, dz] of DEPEN_DIRS) {
+    if (castDist(x, y + 0.15, z, dx, dz) < rad) return false;
+  }
+  return true;
+}
+function findClearSpawn(x, z, rad = 0.35) {
+  if (isClear(x, 0.1, z, rad)) return [x, z];
+  for (let ring = 1; ring <= 6; ring++) {
+    const d = ring * 0.7;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + ring * 0.4;
+      const nx = x + Math.cos(a) * d, nz = z + Math.sin(a) * d;
+      if (isClear(nx, 0.1, nz, rad)) return [nx, nz];
+    }
+  }
+  return [x, z]; // give up — depenetrate will keep trying each frame
+}
+
+// Open space above a point (to the first ceiling-ish surface). Used to stop
+// hiders crawling UNDER sofas/beds/tables — a fully hidden hider is no fun to
+// hunt. Room ceilings are ~2.4m+, so they never block normal movement.
+function clearanceAbove(x, y, z) {
+  if (!collisionMeshes.length) return Infinity;
+  _ro.set(x, y + 0.06, z); _rd.set(0, 1, 0);
+  _rc.set(_ro, _rd); _rc.far = 3;
+  const h = _rc.intersectObjects(collisionMeshes, true)[0];
+  return h ? h.distance : Infinity;
+}
+// 0.6 blocks the sofa/bed crawl-space (solid skirts → unspottable) but still
+// lets you duck between open table legs, where a seeker CAN spot you.
+const MIN_HEADROOM_HIDER = 0.6;
+const MIN_HEADROOM_SEEKER = 1.4;  // the (taller) seeker can't duck under tables
+
+// Is there a building floor under (x,z)? Used to keep players ON the floors
+// and out of the surrounding void (anti-escape).
 function hasFloor(x, z, fromY) {
   if (!collisionMeshes.length) return true;
   _ro.set(x, (fromY || 0) + 0.6, z); _rd.set(0, -1, 0);
@@ -818,83 +1051,114 @@ function groundUnder(x, y, z) {
   return 0;
 }
 
-// Is there a clingable surface within reach (facing or joystick direction)?
-// Look for a wall/object the doodler faces; remember the direction straight INTO
-// that surface (along its normal) so cling can snap flush and align to it.
+// Is there a climbable surface within reach of the chameleon's facing?
+// Remember the direction straight INTO that surface (along its normal) so
+// climbing can snap flush and align to it.
 const surfaceDir = { x: 0, z: 1 };
-const clingDir = { x: 0, z: 1 };
+const climbDir = { x: 0, z: 1 };
 function detectSurface(p) {
   if (!collisionMeshes.length) return false;
   _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(Math.sin(p.ry), 0, Math.cos(p.ry)).normalize();
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
   const hit = _rc.intersectObjects(collisionMeshes, true)[0];
   if (!hit) return false;
-  // Default: head straight along the look ray. If the hit face gives a usable
-  // (near-vertical) normal, head along -normal so we align square to the wall.
   let nx = _rd.x, nz = _rd.z;
   if (hit.face) {
     _nrm.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
     if (Math.hypot(_nrm.x, _nrm.z) > 0.25) { // a wall, not a floor/ceiling
       const m = Math.hypot(_nrm.x, _nrm.z);
       nx = -_nrm.x / m; nz = -_nrm.z / m;
+      // Baked interior meshes often have flipped normals; the ray direction is
+      // ground truth for "into the wall" — never point back at the player.
+      if (nx * _rd.x + nz * _rd.z < 0) { nx = -nx; nz = -nz; }
     }
   }
   surfaceDir.x = nx; surfaceDir.z = nz;
   return true;
 }
 
+// Camera-relative movement: the joystick/WASD vector is interpreted in the
+// camera's frame — push up = away from camera, push right = SCREEN right —
+// and the mannequin turns to face its direction of travel.
+// Screen-right for a view direction d=(sin yaw, cos yaw) is d × up =
+// (-cos yaw, sin yaw). (The old vector was negated: A strafed right.)
+function moveVector() {
+  const f = forwardXZ(cam.yaw);
+  const rx = -f.z, rz = f.x;                 // camera-right on the XZ plane
+  const x = f.x * joyVec.y + rx * joyVec.x;
+  const z = f.z * joyVec.y + rz * joyVec.x;
+  const m = Math.hypot(x, z);
+  if (m < 0.001) return null;
+  return { x: x / m, z: z / m, mag: Math.min(1, m) };
+}
+
 function applyMovement(dt) {
   const b = bounds();
-  const turn = joyVec.x;   // A / left  = turn left,  D / right = turn right
-  const fwd = joyVec.y;    // W / up    = forward,    S / down  = backward
-  if (!hiderControls()) clinging = false;
+  if (!hiderControls()) climbing = false;
 
   if (hiderControls()) {
     const p = myBody; p.vy = p.vy || 0;
-    const HRAD = 0.16, RAYY = (p.y || 0) + 0.12;
-    if (clinging) {
-      // Climb up/down the surface and strafe sideways along it.
-      if (fwd > 0) { const ny = (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt; if (ny <= ROOF) p.y = ny; }
-      else if (fwd < 0) { p.y = Math.max(0, (p.y || 0) + fwd * HIDER_MOVE_SPEED * dt); }
-      if (turn) {                                      // strafe perpendicular to the surface
-        const px = -clingDir.z, pz = clingDir.x;
-        let nx = clamp(p.x + px * turn * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + pz * turn * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+    const HRAD = 0.16, RAYY = (p.y || 0) + 0.1;
+    if (climbing) {
+      // On the wall: up/down climbs, left/right sidles along the surface.
+      // Screen-right while the camera faces the wall (along climbDir) is
+      // climbDir × up = (-dz, dx).
+      const up = joyVec.y, side = joyVec.x;
+      if (up > 0) { const ny = (p.y || 0) + up * HIDER_MOVE_SPEED * dt; if (ny <= ROOF) p.y = ny; }
+      else if (up < 0) { p.y = Math.max(0, (p.y || 0) + up * HIDER_MOVE_SPEED * dt); }
+      if (side) {
+        const px = -climbDir.z, pz = climbDir.x;
+        let nx = clamp(p.x + px * side * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + pz * side * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
         [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
         p.x = nx; p.z = nz;
       }
-      // Re-stick flush to the surface; let go (and fall) once it's no longer
-      // there — i.e. you climbed over its top edge or strafed past its side.
-      _ro.set(p.x - clingDir.x * 0.3, (p.y || 0) + 0.12, p.z - clingDir.z * 0.3);
-      _rd.set(clingDir.x, 0, clingDir.z).normalize();
-      _rc.set(_ro, _rd); _rc.far = 0.3 + CLING_REACH;
-      const sh = _rc.intersectObjects(collisionMeshes, true)[0];
+      // Re-stick flush to the surface (probe at two heights — baked meshes
+      // are lumpy); only let go after the surface is gone several frames in
+      // a row, so a one-frame miss doesn't drop you off the wall.
+      const probeStick = (hy) => {
+        _ro.set(p.x - climbDir.x * 0.35, hy, p.z - climbDir.z * 0.35);
+        _rd.set(climbDir.x, 0, climbDir.z).normalize();
+        _rc.set(_ro, _rd); _rc.far = 0.35 + CLING_REACH;
+        return _rc.intersectObjects(collisionMeshes, true)[0];
+      };
+      const sh = probeStick((p.y || 0) + 0.12) || probeStick((p.y || 0) + 0.45);
       const gy = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
-      if ((p.y || 0) <= gy + 0.05) { p.y = gy; clinging = false; }      // reached the floor
-      else if (sh) { p.x = sh.point.x - clingDir.x * CLING_GAP; p.z = sh.point.z - clingDir.z * CLING_GAP; } // stay glued, flush
-      else {                                                            // surface ended
-        const fx = clamp(p.x + clingDir.x * 0.35, b.minX, b.maxX);
-        const fz = clamp(p.z + clingDir.z * 0.35, b.minZ, b.maxZ);
-        if (fwd > 0 && hasFloor(fx, fz, p.y)) {                         // crested the top → step on
+      // Climbing DOWN onto the floor releases; resting flat at ground level
+      // sticks (that's the picture-frame pose).
+      if ((p.y || 0) <= gy + 0.05 && up < 0) { p.y = gy; stopClimb(); }
+      else if (sh) {
+        climbMiss = 0;
+        p.x = sh.point.x - climbDir.x * CLING_GAP;
+        p.z = sh.point.z - climbDir.z * CLING_GAP;
+      } else if (++climbMiss >= 5) {                                       // surface really ended
+        const fx = clamp(p.x + climbDir.x * 0.35, b.minX, b.maxX);
+        const fz = clamp(p.z + climbDir.z * 0.35, b.minZ, b.maxZ);
+        if (up > 0 && hasFloor(fx, fz, p.y)) {                             // crested the top → step on
           p.x = fx; p.z = fz; p.y = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
         }
-        clinging = false;                                              // otherwise drop (gravity resumes)
+        stopClimb();                                                      // otherwise drop
       }
-      if (clinging) p.vy = 0; // hold position while stuck; once detached, gravity takes over
-      if (jumpRequested) { clinging = false; p.vy = JUMP_VEL * 0.5; }
+      if (climbing) p.vy = 0;
+      if (wantJump()) { consumeJump(); stopClimb(); p.vy = JUMP_VEL * 0.55; }
     } else {
-      // TANK controls: turn to face, then move forward/back along that facing.
-      if (turn) p.ry -= turn * TURN_RATE * dt;   // A/left turns left (char POV)
-      if (fwd) {
-        const f = forwardXZ(p.ry);
-        let nx = clamp(p.x + f.x * fwd * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + f.z * fwd * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
-        [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD);
-        if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; } // stay on the building floor
+      // Camera-relative walk.
+      const mv = moveVector();
+      if (mv) {
+        p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
+        let nx = clamp(p.x + mv.x * mv.mag * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + mv.z * mv.mag * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
+        // Stay on the building floor, and never crawl under furniture.
+        const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
+        if (hasFloor(nx, nz, p.y) && clearanceAbove(nx, gy, nz) >= MIN_HEADROOM_HIDER) {
+          p.x = nx; p.z = nz;
+        }
       }
       depenetrate(p, RAYY, HRAD);
-      if (turn || fwd) cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 8); // camera follows facing
-      if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
+      if (wantJump() && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.04) {
+        consumeJump(); p.vy = JUMP_VEL; SFX.click();
+      }
       p.vy -= GRAVITY * dt;
       let ny = (p.y || 0) + p.vy * dt;
       const g = groundUnder(p.x, ny, p.z);
@@ -902,25 +1166,25 @@ function applyMovement(dt) {
       if (ny > ROOF) { ny = ROOF; if (p.vy > 0) p.vy = 0; }
       p.y = ny;
     }
-    jumpRequested = false;
-    nearSurface = !clinging && detectSurface(p);
+    nearSurface = !climbing && (frameCount % 3 === 0 ? detectSurface(p) : nearSurface);
     ensureMyChar(myBody);
-    if (turn || fwd || clinging || p.vy !== 0) sendMove(false);
+    if (joyVec.x || joyVec.y || climbing || p.vy !== 0) sendMove(false);
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     const p = seekerPos; p.vy = p.vy || 0;
-    const SRAD = 0.4, RAYY = (p.y || 0) + 1.0;
-    // First-person tank: A/D turn the view, W/S move along it.
-    if (turn) cam.yaw -= turn * TURN_RATE * dt;   // A/left turns view left
-    if (fwd) {
-      const f = forwardXZ(cam.yaw);
-      let nx = clamp(p.x + f.x * fwd * MOVE_SPEED * dt, b.minX, b.maxX);
-      let nz = clamp(p.z + f.z * fwd * MOVE_SPEED * dt, b.minZ, b.maxZ);
-      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD);
-      if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; } // stay on the building floor
+    const SRAD = 0.4, RAYY = (p.y || 0) + 0.35;
+    // First-person: WASD strafes relative to the view.
+    const mv = moveVector();
+    if (mv) {
+      let nx = clamp(p.x + mv.x * mv.mag * MOVE_SPEED * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + mv.z * mv.mag * MOVE_SPEED * dt, b.minZ, b.maxZ);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
+      const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
+      if (hasFloor(nx, nz, p.y) && clearanceAbove(nx, gy, nz) >= MIN_HEADROOM_SEEKER) {
+        p.x = nx; p.z = nz; // stay on the building floor, out from under furniture
+      }
     }
     depenetrate(p, RAYY, SRAD);
-    if (jumpRequested && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.03) p.vy = JUMP_VEL;
-    jumpRequested = false;
+    if (wantJump() && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.04) { consumeJump(); p.vy = JUMP_VEL; }
     p.vy -= GRAVITY * dt;
     let ny = (p.y || 0) + p.vy * dt;
     const g = groundUnder(p.x, ny, p.z);
@@ -929,23 +1193,31 @@ function applyMovement(dt) {
     p.y = ny;
     sendSeek();
   } else if (iSpectate()) {
-    // Caught: roam freely as a spectator (tank controls, on the floor).
+    // Caught: roam freely as a spectator (camera-relative, on the floor).
     const p = myBody;
-    if (turn) p.ry += turn * TURN_RATE * dt;
-    if (fwd) {
-      const f = forwardXZ(p.ry);
-      let nx = clamp(p.x + f.x * fwd * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-      let nz = clamp(p.z + f.z * fwd * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+    const mv = moveVector();
+    if (mv) {
+      p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
+      let nx = clamp(p.x + mv.x * HIDER_MOVE_SPEED * 1.6 * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + mv.z * HIDER_MOVE_SPEED * 1.6 * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.16);
       if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; }
     }
     depenetrate(p, (p.y || 0) + 0.12, 0.16);
-    if (turn || fwd) cam.yaw += angleDelta(cam.yaw, p.ry) * Math.min(1, dt * 8);
     p.y = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
-    jumpRequested = false;
-  } else {
-    jumpRequested = false;
   }
+}
+
+function stopClimb() {
+  if (!climbing) return;
+  climbing = false;
+  if (myBody) myBody.pose = 'standing';
+  syncPoseButtons();
+}
+function syncPoseButtons() {
+  const pose = myBody ? myBody.pose : 'standing';
+  document.querySelectorAll('#posePanel .pose').forEach((x) =>
+    x.classList.toggle('active', x.dataset.pose === pose));
 }
 
 // Seeker tells the server its position (so spectators' minimaps update).
@@ -961,7 +1233,7 @@ function updateCamera() {
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
   }
-  // `s` scales the framing to the actor's size (hiders are tiny).
+  // `s` scales the framing to the actor's size (hiders are small).
   const thirdPerson = (target, s = 1) => {
     cam.pitch = clamp(cam.pitch, TP.pitchMin, TP.pitchMax);
     const f = forwardXZ(cam.yaw);
@@ -975,8 +1247,8 @@ function updateCamera() {
     const cyWant = (target.y || 0) + 1.2 * s + dist * Math.sin(cam.pitch);
     let cy = Math.max(cyMin, cyWant);
     const lookY = (target.y || 0) + 1.0 * s + Math.max(0, cyMin - cyWant);
-    // Pull the camera in if geometry is between it and the doodler, so it never
-    // buries inside a wall/furniture (raycast from the doodler out to the camera).
+    // Pull the camera in if geometry is between it and the chameleon, so it
+    // never buries inside a wall/furniture.
     if (collisionMeshes.length) {
       _ro.set(target.x, lookY, target.z);
       _rd.set(cx - target.x, cy - lookY, cz - target.z);
@@ -1002,77 +1274,107 @@ function updateCamera() {
     camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
   };
 
-  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE);
+  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
   else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) firstPerson(seekerPos);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
-    if (mine) thirdPerson(mine, HIDER_SCALE);
+    if (mine) thirdPerson(mine, HIDER_SCALE * 2);
     else firstPerson(seekerPos || { x: 0, z: -8 });
   }
 }
 
-// Procedural walk cycle for the local hider: swing legs (and arms counter) while
-// moving; settle back to the chosen pose when still.
+// Procedural walk cycle for the local hider: swing legs (and arms counter)
+// while moving; settle back to the chosen pose when still.
 let walkPhase = 0;
 function updateWalk(dt) {
-  if (!myChar || !hiderControls() || clinging) return;
-  const pose = myBody.pose;
-  if (pose !== 'standing') return; // other poses are held
+  if (!myChar || !hiderControls() || climbing) return;
+  if (myBody.pose !== 'standing') return; // other poses are held
   const j = myChar.userData.joints;
-  if (Math.abs(joyVec.y) > 0.05) {            // walking forward/back
+  const moving = Math.abs(joyVec.x) > 0.05 || Math.abs(joyVec.y) > 0.05;
+  if (moving) {
     walkPhase += dt * 11;
     const a = Math.sin(walkPhase) * 0.5;
     j.legL.rotation.x = a; j.legR.rotation.x = -a;
     j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
   } else if (walkPhase !== 0) {
     walkPhase = 0;
-    setPose(myChar, pose); // restore straight limbs
+    setPose(myChar, myBody.pose); // restore straight limbs
   }
 }
 
-let _jumpVis = null, _clingVis = null;
+let _jumpVis = null, _climbVis = null, _whisVis = null, _zoomVis = null;
 function updateActionButtons() {
   const canMove = hiderControls();
   const seekerHunt = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
   const jv = canMove || seekerHunt;
-  const cv = canMove && (nearSurface || clinging);
+  const cv = canMove && (nearSurface || climbing);
+  const wv = canMove && snap.phase === 'hunt' && snap.settings && snap.settings.whistle;
+  const zv = canZoom();
   if (jv !== _jumpVis) { _jumpVis = jv; $('jumpBtn').classList.toggle('hidden', !jv); }
-  if (cv !== _clingVis) { _clingVis = cv; $('clingBtn').classList.toggle('hidden', !cv); }
-  $('clingBtn').textContent = clinging ? '⤓' : '🧲';
+  if (cv !== _climbVis) { _climbVis = cv; $('clingBtn').classList.toggle('hidden', !cv); }
+  if (zv !== _zoomVis) { _zoomVis = zv; $('zoomCtrls').classList.toggle('hidden', !zv); }
+  if (wv !== _whisVis) {
+    _whisVis = wv;
+    $('whistleBtn').classList.toggle('hidden', !wv);
+    $('whistleMeter').classList.toggle('hidden', !wv);
+  }
+  $('clingBtn').classList.toggle('on', climbing);
+  $('clingBtn').querySelector('.lbl').textContent = climbing ? 'Drop' : 'Wall';
   // Crosshair turns red while the seeker's paint gun reloads.
   if (seekerHunt) $('crosshair').classList.toggle('reloading', (Date.now() - lastShotAt) < 1000);
 }
 
-function animate() {
-  requestAnimationFrame(animate);
-  if (!threeReady || !snap || snap.phase === 'lobby') return;
-  const dt = Math.min(clock.getDelta(), 0.05);
+let frameCount = 0;
+function tick(dt, render) {
+  frameCount++;
   if (joyId === null) joyVec = keyboardVec(); // keyboard drives movement when the stick is idle
   applyMovement(dt);
+  if (!render) return;
   updateWalk(dt);
+  const t = clock.elapsedTime;
+  updateRemoteAnims(dt, t);
+  updateProjectiles(dt);
+  for (const [, m] of beacons) { m.rotation.y += dt * 2; m.material.opacity = 0.4 + 0.25 * Math.sin(t * 5); }
   updateActionButtons();
   updateCamera();
   renderer.render(scene, camera);
 }
+function animate() {
+  requestAnimationFrame(animate);
+  if (!threeReady || !snap || snap.phase === 'lobby') return;
+  tick(Math.min(clock.getDelta(), 0.05), true);
+}
+// Backgrounded tabs suspend requestAnimationFrame; keep the SIMULATION alive
+// (movement, gravity, network sends) at 30 Hz so the round doesn't freeze —
+// rendering stays paused.
+setInterval(() => {
+  if (!document.hidden) return;
+  if (!threeReady || !snap || snap.phase === 'lobby') return;
+  tick(Math.min(clock.getDelta(), 0.05), false);
+}, 33);
 
-// Start clinging: lock onto the detected surface and face it (so climb/strafe
-// are relative to that surface).
-function startCling() {
+// Start climbing: lock onto the detected surface, snap flush against it with
+// your BACK to the wall (the picture-frame pose — paintable side out).
+function startClimb() {
   if (!nearSurface || !myBody) return;
-  clinging = true;
-  clingDir.x = surfaceDir.x; clingDir.z = surfaceDir.z;
-  // Snap flush against the surface (no gap) and face square into it.
-  _ro.set(myBody.x, (myBody.y || 0) + 0.12, myBody.z); _rd.set(clingDir.x, 0, clingDir.z).normalize();
+  climbing = true; climbMiss = 0;
+  climbDir.x = surfaceDir.x; climbDir.z = surfaceDir.z;
+  _ro.set(myBody.x, (myBody.y || 0) + 0.12, myBody.z); _rd.set(climbDir.x, 0, climbDir.z).normalize();
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
   const h = _rc.intersectObjects(collisionMeshes, true)[0];
-  if (h) { myBody.x = h.point.x - clingDir.x * CLING_GAP; myBody.z = h.point.z - clingDir.z * CLING_GAP; }
-  myBody.ry = Math.atan2(clingDir.x, clingDir.z);
+  if (h) { myBody.x = h.point.x - climbDir.x * CLING_GAP; myBody.z = h.point.z - climbDir.z * CLING_GAP; }
+  myBody.ry = Math.atan2(-climbDir.x, -climbDir.z);  // face OUT of the wall
+  myBody.pose = 'climb';
+  syncPoseButtons();
+  SFX.click();
+  sendMove(true);
 }
-$('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jumpRequested = true; });
+$('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jumpAskedAt = performance.now(); });
 $('clingBtn').addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (clinging) clinging = false; else startCling();
+  if (climbing) { stopClimb(); sendMove(true); } else startClimb();
 });
+$('whistleBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); sendWhistle(); });
 
 // ---- Input: joystick ----------------------------------------------------
 let joyVec = { x: 0, y: 0 }, joyId = null;
@@ -1102,16 +1404,18 @@ joyEl.addEventListener('pointerup', joyEnd);
 joyEl.addEventListener('pointercancel', joyEnd);
 
 // ---- Input: keyboard + mouse (desktop) ----------------------------------
-// WASD / arrows move, Space jumps, E clings; mouse drag looks, click acts,
-// wheel zooms while painting. Keyboard drives the joystick vector when the
-// on-screen stick isn't being touched.
+// WASD / arrows move (camera-relative), Space jumps, E climbs, B/F blends;
+// mouse drag looks, click acts, wheel zooms.
 const keyState = {};
 window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (document.getElementById('screen-game') && !document.getElementById('screen-game').classList.contains('active')) return;
   keyState[k] = true;
-  if (k === ' ') { jumpRequested = true; e.preventDefault(); }
-  if (k === 'e') { if (clinging) clinging = false; else startCling(); }
+  if (k === ' ') { jumpAskedAt = performance.now(); e.preventDefault(); }
+  if (k === 'e') { if (climbing) { stopClimb(); sendMove(true); } else startClimb(); }
+  if (k === '1' || k === 'q') sendWhistle();
+  if (k === '=' || k === '+') applyZoom(-0.35);
+  if (k === '-' || k === '_') applyZoom(0.35);
 });
 window.addEventListener('keyup', (e) => { keyState[e.key.toLowerCase()] = false; });
 function keyboardVec() {
@@ -1123,15 +1427,29 @@ function keyboardVec() {
   const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
   return { x, y };
 }
-// Zoom the third-person camera in/out (paint detail up close, survey from afar).
+// Zoom the third-person camera in/out (paint detail up close, survey from
+// afar): mouse wheel, pinch, +/- keys, or the on-screen buttons.
 function canZoom() { return hiderControls() || iSpectate(); }
-function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.5, 5); } // max keeps you within the room
+function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.45, 8); }
 $('stage').addEventListener('wheel', (e) => {
   if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
 }, { passive: false });
+// Hold-to-zoom buttons (mobile-friendly).
+function bindZoomBtn(id, dir) {
+  let iv = null;
+  const stop = () => { clearInterval(iv); iv = null; };
+  $(id).addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    applyZoom(dir * 0.35);
+    iv = setInterval(() => applyZoom(dir * 0.22), 90);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $(id).addEventListener(ev, stop);
+}
+bindZoomBtn('zoomInBtn', -1);
+bindZoomBtn('zoomOutBtn', 1);
 
 // ---- Input: paint / look-drag / tap -------------------------------------
-// While a hider preps: dragging on your doodler paints it; dragging on empty
+// While a hider preps: dragging on your chameleon paints it; dragging on empty
 // space orbits the camera; a tap on the environment eyedrops a colour.
 let lookId = null, lookStart = null, moved = 0, painting = false;
 const canvas = $('stage');
@@ -1210,7 +1528,7 @@ function handleTap(clientX, clientY) {
     // the brush. Reading the rendered image (with lighting + fog) gives the
     // colour the surface actually shows on screen — the best camouflage match.
     const color = sampleScreenColor(clientX, clientY);
-    if (color) setBrushColor(color);
+    if (color) { setBrushColor(color); SFX.click(); toast(`🎨 Colour picked`, 700); }
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
     seekerShoot(clientX, clientY);
   }
@@ -1233,12 +1551,44 @@ function seekerShoot(clientX, clientY) {
   lastShotAt = now;
   const color = SHOOT_COLORS[Math.floor(Math.random() * SHOOT_COLORS.length)];
   socket.emit('shoot', { x: p.x, y: p.y, z: p.z, color });
-  pingTag(clientX, clientY);
+  // Local feedback: muzzle sound + a paintball flying from the camera.
+  SFX.shoot();
+  spawnProjectile(camera.position.clone().addScaledVector(_rd.set(0, -0.2, 0), 1), p, color);
 }
 
-// A paint splat at a world point — grows and fades; visible to everyone.
+// ---- Paintball projectiles + splats --------------------------------------
+const projectiles = [];
+function spawnProjectile(from, to, color) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 10, 8),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(color) }));
+  m.position.copy(from);
+  scene.add(m);
+  projectiles.push({ m, from: from.clone(), to: to.clone(), t: 0, color });
+}
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const pr = projectiles[i];
+    pr.t += dt * 6.5;   // ~150ms flight
+    if (pr.t >= 1) {
+      scene.remove(pr.m); pr.m.geometry.dispose(); pr.m.material.dispose();
+      projectiles.splice(i, 1);
+      paintSplat(pr.to.x, pr.to.y, pr.to.z, pr.color);
+      continue;
+    }
+    pr.m.position.lerpVectors(pr.from, pr.to, pr.t);
+    // slight arc
+    pr.m.position.y += Math.sin(pr.t * Math.PI) * 0.15;
+  }
+}
+
+// A paint splat at a world point — a burst that fades, plus a blob of paint
+// that STAYS for the rest of the round (the room slowly fills with evidence
+// of the seeker's misses).
+const splatDecals = [];
 function paintSplat(x, y, z, color) {
   if (!scene) return;
+  SFX.splat();
   const m = new THREE.Mesh(
     new THREE.SphereGeometry(0.5, 12, 10),
     new THREE.MeshBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity: 0.9 }));
@@ -1250,23 +1600,16 @@ function paintSplat(x, y, z, color) {
     m.scale.setScalar(1 + t * 2.4); m.material.opacity = 0.9 * (1 - t);
     requestAnimationFrame(fade);
   })();
+  const d = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 10, 8),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.5 }));
+  d.scale.y = 0.22;                    // a squashed blob of dried paint
+  d.position.set(x, y, z);
+  scene.add(d); splatDecals.push(d);
 }
-
-// Closest painted hider whose centre projects within `maxPx` of the tap.
-const _proj = new THREE.Vector3();
-function nearestHiderOnScreen(clientX, clientY, maxPx) {
-  const r = canvas.getBoundingClientRect();
-  let best = null, bestD = maxPx;
-  for (const [id, g] of charGroups) {
-    _proj.set(g.position.x, (g.position.y || 0) + 0.18, g.position.z);
-    _proj.project(camera);
-    if (_proj.z > 1) continue;                 // behind the camera
-    const sx = r.left + (_proj.x * 0.5 + 0.5) * r.width;
-    const sy = r.top + (-_proj.y * 0.5 + 0.5) * r.height;
-    const d = Math.hypot(sx - clientX, sy - clientY);
-    if (d < bestD) { bestD = d; best = id; }
-  }
-  return best;
+function clearSplats() {
+  for (const d of splatDecals) { scene.remove(d); d.geometry.dispose(); d.material.dispose(); }
+  splatDecals.length = 0;
 }
 
 // Render the scene to an off-screen target and read back one pixel under the
@@ -1294,16 +1637,13 @@ function sampleScreenColor(clientX, clientY) {
   const hex = (n) => n.toString(16).padStart(2, '0');
   return '#' + hex(buf[0]) + hex(buf[1]) + hex(buf[2]);
 }
-function pingTag(x, y) {
-  const f = document.createElement('div'); f.className = 'fly'; f.textContent = '🎯';
-  f.style.left = x - 16 + 'px'; f.style.top = y - 16 + 'px';
-  $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 1000);
-}
 
 // ---- Painting tools -----------------------------------------------------
 function setBrushColor(color) {
   brushColor = color;
   $('colorInput').value = color;
+  document.querySelectorAll('#palette .swatch').forEach((s) =>
+    s.classList.toggle('active', s.dataset.c === color));
 }
 // Movement/pose go out frequently but tiny; the painted texture is large so
 // it's sent on its own throttle (and once at each stroke end).
@@ -1324,17 +1664,33 @@ function sendTexture(force) {
   catch (_) { url = myChar.userData.canvas.toDataURL('image/png'); }
   socket.emit('paint', { paint: url });
 }
-document.querySelectorAll('#hiderTools .brush').forEach((b) =>
+// Paint / Pose slide-up panels (mobile-friendly: one open at a time).
+let sheetOpen = null;
+function openSheet(which) {
+  sheetOpen = which;
+  $('paintPanel').classList.toggle('hidden', which !== 'paint');
+  $('posePanel').classList.toggle('hidden', which !== 'pose');
+  $('paintToggle').classList.toggle('open', which === 'paint');
+  $('poseToggle').classList.toggle('open', which === 'pose');
+}
+$('paintToggle').addEventListener('click', () => { openSheet(sheetOpen === 'paint' ? null : 'paint'); SFX.click(); });
+$('poseToggle').addEventListener('click', () => { openSheet(sheetOpen === 'pose' ? null : 'pose'); SFX.click(); });
+
+document.querySelectorAll('#paintPanel .brush').forEach((b) =>
   b.addEventListener('click', () => {
     brushSize = b.dataset.size;
-    document.querySelectorAll('#hiderTools .brush').forEach((x) => x.classList.toggle('active', x === b));
+    document.querySelectorAll('#paintPanel .brush').forEach((x) => x.classList.toggle('active', x === b));
+    SFX.click();
   }));
-document.querySelectorAll('#hiderTools .pose').forEach((b) =>
+document.querySelectorAll('#posePanel .pose').forEach((b) =>
   b.addEventListener('click', () => {
     if (!myBody) return;
+    if (climbing) stopClimb();
     myBody.pose = b.dataset.pose;
-    document.querySelectorAll('#hiderTools .pose').forEach((x) => x.classList.toggle('active', x === b));
+    syncPoseButtons();
     ensureMyChar(myBody); sendMove(true);
+    SFX.click();
+    openSheet(null);            // picked — get the panel out of the way
   }));
 $('colorInput').addEventListener('input', (e) => setBrushColor(e.target.value));
 $('fillAllBtn').addEventListener('click', fillAll);
@@ -1346,19 +1702,11 @@ const PALETTE = ['#ffffff', '#111111', '#e23b3b', '#f59e0b', '#ffe14d', '#3bd16a
   const wrap = $('palette'); if (!wrap) return;
   PALETTE.forEach((c) => {
     const b = document.createElement('button');
-    b.className = 'swatch'; b.style.background = c;
-    b.addEventListener('click', () => setBrushColor(c));
+    b.className = 'swatch'; b.style.background = c; b.dataset.c = c;
+    b.addEventListener('click', () => { setBrushColor(c); SFX.click(); });
     wrap.appendChild(b);
   });
 })();
-
-// Minimise/expand a tool group.
-document.querySelectorAll('#hiderTools .tool-min').forEach((b) =>
-  b.addEventListener('click', () => {
-    const g = b.dataset.group;
-    document.querySelectorAll(`#hiderTools .tool-group[data-group="${g}"]`).forEach((el) => el.classList.toggle('collapsed'));
-    b.classList.toggle('off');
-  }));
 
 // A quick colour splash at the screen point you painted (visual feedback).
 let lastSplash = 0;
@@ -1379,41 +1727,111 @@ function flyEmote(emoji) {
   $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 1700);
 }
 
+// ---- Banner (role reveal / phase changes) ---------------------------------
+let bannerTimer = null;
+function showBanner(emoji, title, text, cls = '', ms = 2400) {
+  const el = $('banner');
+  clearTimeout(bannerTimer);
+  el.className = 'banner ' + cls;
+  $('bannerEmoji').textContent = emoji;
+  $('bannerTitle').textContent = title;
+  $('bannerText').textContent = text;
+  SFX.banner();
+  bannerTimer = setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.classList.add('hidden'), 300);
+  }, ms);
+}
+
+function confetti(n = 60) {
+  const colors = ['#ff8a00', '#58c443', '#29b6f6', '#ffcf3f', '#ff5252', '#b14bff'];
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random() * 100 + '%';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = (1.6 + Math.random() * 1.6) + 's';
+    c.style.animationDelay = (Math.random() * 0.6) + 's';
+    $('screen-game').appendChild(c);
+    setTimeout(() => c.remove(), 4000);
+  }
+}
+
 // ---- Per-snapshot game UI ----------------------------------------------
+let lastPhaseKey = '';
 function renderGame() {
   initThree();
   buildScene(snap.mapId);
   resize();
 
   const phase = snap.phase, role = snap.myRole || '';
-  $('phaseLabel').textContent = phase.toUpperCase();
-  const rl = $('roleLabel'); rl.textContent = role ? role.toUpperCase() : ''; rl.className = 'pill role ' + role;
-  $('remainLabel').textContent = (phase === 'hunt' || phase === 'roundover')
-    ? `${snap.remaining}/${snap.totalHiders} hidden` : `R${snap.round}/${snap.totalRounds}`;
+  // Snapshots stream in ~10×/s during the hunt — only touch the DOM when the
+  // rendered value actually changed (innerHTML churn was a big lag source).
+  const setText = (id, v) => { const el = $(id); if (el.textContent !== v) el.textContent = v; };
+  const setHTML = (id, v) => { const el = $(id); if (el._h !== v) { el._h = v; el.innerHTML = v; } };
+  const phaseName = phase === 'prep' ? 'HIDE' : phase === 'hunt' ? 'SEEK' : phase.toUpperCase();
+  setText('phaseLabel', phaseName);
+  const rl = $('roleLabel');
+  const roleTxt = role ? role.toUpperCase() : '';
+  if (rl.textContent !== roleTxt) rl.textContent = roleTxt;
+  const roleCls = 'pill role ' + role;
+  if (rl.className !== roleCls) rl.className = roleCls;
+  setText('remainLabel', (phase === 'hunt' || phase === 'roundover')
+    ? `${snap.remaining}/${snap.totalHiders} hidden` : `R${snap.round}/${snap.totalRounds}`);
 
-  // Alive/caught hiders shown as person icons for everyone (white = alive,
-  // red = caught).
+  // Alive/caught hiders shown as chameleon icons for everyone.
   const hiders = snap.players.filter((p) => p.role === 'hider');
-  $('aliveBar').innerHTML = hiders.map((p) => personIcon(p.found ? '#ff4d4d' : '#ffffff')).join('');
+  setHTML('aliveBar', hiders.map((p) => lizardIcon(p.found)).join(''));
   $('aliveBar').classList.toggle('hidden', hiders.length === 0);
 
   // Init local actors per round. The hider keeps one local body across prep AND
   // hunt (so painting + position carry over into the chase).
   if (role === 'hider' && (phase === 'prep' || phase === 'hunt') && snap.myBody && myBodyRound !== snap.round) {
     myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
-               pose: snap.myBody.pose, paint: snap.myBody.paint || null };
+               pose: snap.myBody.pose || 'standing', paint: snap.myBody.paint || null };
     myBodyRound = snap.round;
-    cam.yaw = 0; cam.pitch = 0.45; TP.dist = 0.9; // reset zoom
-    removeMyChar();                 // fresh blank doodler (or restored paint)
+    cam.yaw = (snap.myBody.ry || 0); cam.pitch = 0.35; TP.dist = 1.6; // reset zoom
+    climbing = false;
+    myWhistleDeadline = 0;
+    removeMyChar();                 // fresh mannequin (or restored paint)
     $('colorInput').value = brushColor;
-    document.querySelectorAll('#hiderTools .brush').forEach((x) =>
-      x.classList.toggle('active', x.dataset.size === brushSize));
+    syncPoseButtons();
+    clearSplats();                  // last round's paint splats vanish
+    // Never start wedged inside furniture/walls: shift to the nearest clear spot.
+    // (Scene GLBs may still be loading; retry a few times as colliders appear.)
+    const fix = (tries) => {
+      if (!myBody || myBodyRound !== snap.round) return;
+      const [cx, cz] = findClearSpawn(myBody.x, myBody.z);
+      myBody.x = cx; myBody.z = cz;
+      if (tries > 0) setTimeout(() => fix(tries - 1), 700);
+    };
+    fix(4);
   }
   if (phase === 'hunt' && role === 'seeker' && seekerRound !== snap.round) {
     const sb = snap.myBody || { x: 0, z: 0 };  // server-assigned spawn (different room from hiders)
-    seekerPos = { x: sb.x, y: sb.y || 0, z: sb.z, vy: 0 };
+    const [sx2, sz2] = findClearSpawn(sb.x, sb.z, 0.5);
+    seekerPos = { x: sx2, y: sb.y || 0, z: sz2, vy: 0 };
     cam.yaw = sb.ry || 0; cam.pitch = 0;
     seekerRound = snap.round;
+  }
+
+  // Phase-change banners (once per phase per round).
+  const key = `${snap.round}:${phase}:${role}`;
+  if (key !== lastPhaseKey) {
+    lastPhaseKey = key;
+    if (phase === 'prep') {
+      if (role === 'hider') showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
+      else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
+    } else if (phase === 'hunt') {
+      if (role === 'seeker') showBanner('🔫', 'GO SEEK!', 'Shoot to catch — but every miss costs you paint!', 'seeker');
+      else showBanner('🙈', 'HOLD STILL!', 'The seeker is out — stay painted, whistle wisely!', 'hider');
+      if (role === 'hider') myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
+    } else if (phase === 'roundover') {
+      // The signature reveal: everyone sees where the survivors were hiding.
+      showBanner('🎉', 'REVEALED!', 'Look where everyone was hiding…', '', 2600);
+      revealUntil = Date.now() + 3200;
+      setTimeout(() => { if (snap && snap.phase === 'roundover') renderGame(); }, 3300);
+    }
   }
 
   // Scene occupants. The controlling hider draws itself via myChar (smooth,
@@ -1423,15 +1841,29 @@ function renderGame() {
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
 
+  // Reveal beacons: at round end, a golden pillar marks every survivor's spot.
+  syncBeacons(phase === 'roundover' ? (snap.bodies || []).filter((b) => !b.found) : []);
+
   // Controls visibility
   const canMove = hiderControls();           // hider, prep or hunt, not caught
   const spectating = iSpectate();
   const isSeekerHunt = phase === 'hunt' && role === 'seeker';
   $('hiderTools').classList.toggle('hidden', !canMove); // paint during prep AND the hunt
+  if (!canMove && sheetOpen) openSheet(null);
   $('seekerTools').classList.toggle('hidden', !isSeekerHunt);
   $('joystick').classList.toggle('hidden', !(canMove || isSeekerHunt || spectating));
   $('crosshair').classList.toggle('hidden', !isSeekerHunt);
   $('emoteBar').classList.toggle('hidden', phase !== 'hunt');
+
+  // Seeker paint-gun health: misses cost paint; dry = eliminated.
+  const meP = snap.players.find((p) => p.id === myId);
+  const showHp = isSeekerHunt && meP;
+  $('seekerHp').classList.toggle('hidden', !showHp);
+  if (showHp) {
+    const hp = meP.hp == null ? 5 : meP.hp;
+    setHTML('seekerHp', Array.from({ length: 5 }, (_, i) =>
+      `<span class="${i < hp ? '' : 'off'}">🎨</span>`).join(''));
+  }
 
   // Spectator minimap (you can roam + see everyone once caught).
   $('minimap').classList.toggle('hidden', !snap.spectating);
@@ -1441,19 +1873,37 @@ function renderGame() {
   const wait = $('waitOverlay');
   if (phase === 'prep' && role === 'seeker') {
     wait.classList.remove('hidden');
-    $('waitEmoji').textContent = '🎨';
-    $('waitTitle').textContent = 'Hiders are painting…';
+    $('waitEmoji').textContent = '⏳';
+    $('waitTitle').textContent = 'Chameleons are hiding…';
     $('waitText').textContent = 'Memorise the rooms. The hunt is coming.';
-  } else { wait.classList.add('hidden'); if (phase === 'hunt' && role === 'hider') toastHuntOnce(); }
+  } else { wait.classList.add('hidden'); }
 
-  $('scoreOverlay').classList.toggle('hidden', phase !== 'roundover');
-  if (phase === 'roundover') renderScores();
+  // Hold the scoreboard back for a few seconds so everyone can gawk at the
+  // revealed hiding spots first.
+  const showScores = phase === 'roundover' && Date.now() >= revealUntil;
+  $('scoreOverlay').classList.toggle('hidden', !showScores);
+  if (showScores) renderScores();
 }
+let revealUntil = 0;
 
-let _huntToast = -1;
-function toastHuntOnce() {
-  if (_huntToast === snap.round) return; _huntToast = snap.round;
-  toast('🏃 Hunt on — keep moving and stay hidden!', 2600);
+// Golden pillars over surviving hiders during the round-end reveal.
+const beacons = new Map();
+function syncBeacons(bodies) {
+  const seen = new Set();
+  for (const b of bodies) {
+    seen.add(b.id);
+    if (!beacons.has(b.id)) {
+      const m = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.02, 3.2, 10, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xffcf3f, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.position.set(b.x, (b.y || 0) + 1.6, b.z);
+      scene.add(m);
+      beacons.set(b.id, m);
+    }
+  }
+  for (const [id, m] of [...beacons]) {
+    if (!seen.has(id)) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); beacons.delete(id); }
+  }
 }
 
 // Top-down minimap for spectators: every player as a labelled dot.
@@ -1478,25 +1928,41 @@ function drawMinimap() {
   }
 }
 
+let _scoredRound = -1;
 function renderScores() {
   const sorted = [...snap.players].sort((a, b) => b.score - a.score);
   const isFinal = snap.round >= snap.totalRounds;
-  $('scoreTitle').textContent = isFinal ? '🏆 Final Scores' : `Round ${snap.round} done`;
+  $('scoreTitle').textContent = isFinal ? '🏆 Final Scores' : `Round ${snap.round} done!`;
   $('scoreList').innerHTML = sorted.map((p, i) => `
     <li><span class="pemoji">${i === 0 ? '👑' : p.avatar}</span>
     <span class="pname">${escapeHtml(p.name)}</span>
     <span class="tagbadge ${p.role || ''}">${(p.role || '').toUpperCase()}</span>
     <span class="pscore">${p.score}</span></li>`).join('');
   $('nextHint').textContent = isFinal ? 'Returning to lobby…' : 'Next round starting soon…';
+  if (_scoredRound !== snap.round) {
+    _scoredRound = snap.round;
+    SFX.win();
+    confetti(isFinal ? 120 : 50);
+  }
 }
 
 // ---- Timer --------------------------------------------------------------
+let lastTickSec = -1;
 setInterval(() => {
   if (!snap || snap.phase === 'lobby') return;
   const remaining = Math.max(0, snap.deadline - (Date.now() + serverSkew));
   const secs = Math.ceil(remaining / 1000);
   const el = $('timer'); el.textContent = String(Math.max(0, secs));
-  el.classList.toggle('low', secs <= 10 && (snap.phase === 'prep' || snap.phase === 'hunt'));
+  const low = secs <= 10 && (snap.phase === 'prep' || snap.phase === 'hunt');
+  el.classList.toggle('low', low);
+  if (low && secs !== lastTickSec) { lastTickSec = secs; SFX.tick(); }
+  // Seeker's waiting-room countdown mirrors the big timer.
+  if (snap.phase === 'prep' && snap.myRole === 'seeker') $('waitCount').textContent = secs > 0 ? secs : '';
+  // Whistle countdown bar: when it empties, you whistle automatically.
+  if (myWhistleDeadline && snap.phase === 'hunt' && snap.myRole === 'hider') {
+    const frac = clamp((myWhistleDeadline - Date.now()) / WHISTLE_EVERY_MS, 0, 1);
+    $('whistleFill').style.width = (frac * 100).toFixed(1) + '%';
+  }
 }, 200);
 
 // ---- Socket -------------------------------------------------------------
@@ -1507,11 +1973,56 @@ socket.on('state', (s) => {
   if (s.phase === 'lobby') { show('lobby'); renderLobby(); }
   else { show('game'); renderGame(); }
 });
-socket.on('tagged', ({ name, by }) => toast(`🎯 ${by} caught ${name}!`));
-socket.on('miss', () => {});
+socket.on('tagged', ({ id, name, by }) => {
+  toast(`🎯 ${by} caught ${name}!`);
+  SFX.caught();
+  if (id === myId) {           // that was me — red flash + spectate hint
+    const v = $('vignette'); v.classList.remove('hidden');
+    setTimeout(() => v.classList.add('hidden'), 850);
+    showBanner('😵', 'CAUGHT!', 'You can roam and watch the rest of the round.', '', 2000);
+  } else {
+    setTimeout(() => {
+      if (snap && snap.phase === 'hunt' && snap.remaining > 0) toast(`🦎 ${snap.remaining} still hidden!`, 1400);
+    }, 1900);
+  }
+});
+socket.on('miss', ({ hp }) => {
+  // My shot hit nothing — that costs paint.
+  SFX.caught();
+  toast(hp > 0 ? `💦 Miss! ${hp} paint left…` : '💦 Miss!', 1200);
+  const v = $('vignette'); v.classList.remove('hidden');
+  setTimeout(() => v.classList.add('hidden'), 850);
+});
+socket.on('seekerout', ({ id, name }) => {
+  if (id === myId) {
+    showBanner('🫗', 'OUT OF PAINT!', 'Too many misses — the chameleons outlasted you.', 'seeker', 2600);
+  } else {
+    toast(`🫗 ${name} ran out of paint!`);
+  }
+});
+socket.on('whistle', ({ id, x, y, z, auto }) => {
+  playWhistle(x, y, z);
+  if (id === myId) {
+    myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
+    toast(auto ? '😗 Your auto-whistle went off!' : '😗 You whistled — timer reset!', 1300);
+  }
+});
 socket.on('blast', ({ x, y, z, color }) => paintSplat(x, y, z, color));
 socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));
+
+// Dev/debug helpers (harmless in production).
+window.__tp = (x, z) => { const p = myBody || seekerPos; if (p) { p.x = x; p.z = z; p.y = 2; } };
+window.__look = (yaw) => { cam.yaw = yaw; if (myBody) myBody.ry = yaw; };
+window.__shoot = (x, z) => socket.emit('shoot', { x, y: 0.5, z, color: '#ff3bd0' });
+window.__state = () => ({
+  body: myBody && { x: +myBody.x.toFixed(2), y: +(myBody.y || 0).toFixed(2), z: +myBody.z.toFixed(2), pose: myBody.pose },
+  climbing, joy: joyVec, near: nearSurface,
+  seeker: seekerPos && { x: +seekerPos.x.toFixed(2), y: +(seekerPos.y || 0).toFixed(2), z: +seekerPos.z.toFixed(2) },
+  phase: snap && snap.phase, role: snap && snap.myRole,
+  joyId, keyW: !!keyState['w'], frame: frameCount,
+  bodies: (snap && snap.bodies || []).map((b) => ({ x: +b.x.toFixed(1), y: +(b.y || 0).toFixed(1), z: +b.z.toFixed(1), found: !!b.found })),
+});
 
 // ---- Boot ---------------------------------------------------------------
 buildAvatars();
