@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=10';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=11';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -432,6 +432,14 @@ function buildScene(mapId) {
   ground.position.y = -0.03;
   ground.receiveShadow = true;
   g.add(ground);
+  // Open-terrain maps (city streets, the Kenney grounds) walk on the ground
+  // plane itself, so it must be a collision mesh — otherwise hasFloor()
+  // blocks every step taken off a building. Interior maps leave it out so
+  // the building footprint stays the play area (anti-escape).
+  if (map.groundWalk) {
+    try { ground.geometry.computeBoundsTree(); } catch (_) {}
+    collisionMeshes.push(ground);
+  }
 
   scene.add(g);
   roomGroup = g; builtMapId = mapId;
@@ -589,6 +597,14 @@ function placeWallSeg(group, proto, scale, x, baseY, z, rotY) {
   inst.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(inst);
   collisionBoxes.push({ minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z });
+  // The movement system raycasts collisionMeshes — the AABB list above is
+  // only a legacy camera fallback. Without this, walls didn't block walking.
+  inst.traverse((o) => {
+    if (o.isMesh) {
+      try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
+      collisionMeshes.push(o);
+    }
+  });
 }
 
 // ---- Chameleon character + paintable skin texture ------------------------

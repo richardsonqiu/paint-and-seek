@@ -108,6 +108,9 @@ export const MAPS = {
     ground: '#9fb08a',
     sky: '#bcd6ea',
     fog: { color: '#cfe0ec', near: 70, far: 230 },
+    groundWalk: true,  // streets between buildings are the play surface
+    roof: 12,          // buildings are tall — allow climbing their lower tiers
+    bounds: { minX: -66, maxX: 66, minZ: -66, maxZ: 66 },
     scenes: [
       { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 52 },        // sports plaza (centre)
       { file: 'apartamento.glb', pos: [-50, -50], fit: 36 },                      // apartment block
@@ -133,6 +136,7 @@ export const MAPS = {
     ground: '#6fa84e',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 34, far: 88 },
+    groundWalk: true,  // grassy compound — the ground plane is the floor
     kit: TOWN,
     perimeter: { model: 'wall' },
     walls: [
