@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=9';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=10';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1219,6 +1219,15 @@ function moveVector() {
   return { x: x / m, z: z / m, mag: Math.min(1, m) };
 }
 
+// Is the player actively steering (stick or keys)?
+function isMovingInput() { return Math.hypot(joyVec.x, joyVec.y) > 0.06; }
+
+// Chase camera: while moving, the camera eases back behind the character's
+// facing; free orbit is only for standing still.
+function followBehind(ry, dt) {
+  cam.yaw += angleDelta(cam.yaw, ry) * Math.min(1, dt * 3.5);
+}
+
 function applyMovement(dt) {
   const b = bounds();
   if (!hiderControls()) climbing = false;
@@ -1273,6 +1282,7 @@ function applyMovement(dt) {
       const mv = moveVector();
       if (mv) {
         p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
+        followBehind(p.ry, dt);        // moving: camera swings back behind you
         let nx = clamp(p.x + mv.x * mv.mag * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
         let nz = clamp(p.z + mv.z * mv.mag * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
         [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
@@ -1303,6 +1313,7 @@ function applyMovement(dt) {
     const mv = moveVector();
     if (mv) {
       p.ry = lerpAngle(p.ry || 0, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
+      followBehind(p.ry, dt);          // moving: camera swings back behind you
       let nx = clamp(p.x + mv.x * mv.mag * MOVE_SPEED * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * mv.mag * MOVE_SPEED * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
@@ -1328,6 +1339,7 @@ function applyMovement(dt) {
     const mv = moveVector();
     if (mv) {
       p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
+      followBehind(p.ry, dt);          // moving: camera swings back behind you
       let nx = clamp(p.x + mv.x * HIDER_MOVE_SPEED * 1.6 * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * HIDER_MOVE_SPEED * 1.6 * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.16);
@@ -1646,7 +1658,9 @@ canvas.addEventListener('pointermove', (e) => {
   // "Grab the world": drag left → look left (camera pans WITH the finger).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
-  cam.yaw += dx * 0.005;
+  // Panning is for standing still — while moving, the chase camera owns the
+  // yaw (it swings back behind the character); pitch stays adjustable.
+  if (!isMovingInput()) cam.yaw += dx * 0.005;
   cam.pitch += dy * 0.005;
 });
 canvas.addEventListener('pointerup', (e) => {
@@ -2212,6 +2226,7 @@ window.__state = () => ({
   seeker: seekerPos && { x: +seekerPos.x.toFixed(2), y: +(seekerPos.y || 0).toFixed(2), z: +seekerPos.z.toFixed(2) },
   phase: snap && snap.phase, role: snap && snap.myRole,
   joyId, keyW: !!keyState['w'], frame: frameCount,
+  camYaw: +cam.yaw.toFixed(2), ry: myBody ? +(myBody.ry || 0).toFixed(2) : null,
   bodies: (snap && snap.bodies || []).map((b) => ({ x: +b.x.toFixed(1), y: +(b.y || 0).toFixed(1), z: +b.z.toFixed(1), found: !!b.found })),
 });
 
