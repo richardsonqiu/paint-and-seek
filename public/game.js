@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=14';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=15';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -711,9 +711,11 @@ function buildCharacter(paintUrl) {
   const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.0 });
 
   const G = buildCharGeos();
+  const paintMeshes = [];
   const mesh = (geo, x, y, z = 0) => {
     const m = new THREE.Mesh(geo, material);
     m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+    paintMeshes.push(m);       // every skin part participates in sphere painting
     return m;
   };
   const pivot = (x, y, z = 0) => { const p = new THREE.Group(); p.position.set(x, y, z); return p; };
@@ -739,6 +741,7 @@ function buildCharacter(paintUrl) {
   grp.userData = {
     canvas, ctx, texture, material, paintUrl: null,
     joints: { upper, armL, armR, legL, legR },
+    paintMeshes,
   };
   if (paintUrl) applyPaintUrl(grp, paintUrl);
   return grp;
@@ -1012,12 +1015,50 @@ function paintAtUV(uv) {
   paintDirtyForSync = true;
   sendTexture(false);
 }
+// Sphere brush: the body is six meshes whose UVs live in separate atlas
+// regions, so a plain surface stroke leaves WHITE SEAMS wherever parts
+// overlap (neck, shoulders, hips). Every dab therefore also paints all
+// vertices of EVERY part that fall inside a 3D sphere around the contact
+// point — strokes flow across the joints as if the body were one piece.
+const _sphLocal = new THREE.Vector3(), _sphInv = new THREE.Matrix4();
+function paintSphere(worldPoint) {
+  if (!myChar) return;
+  const ctx = myChar.userData.ctx;
+  const brushPx = BRUSH_PX[brushSize];
+  // Local rig units: ~95 atlas px per unit; +0.09 reaches into the joint
+  // overlap so the hidden white collar under each part gets covered too.
+  const localR = brushPx / 95 + 0.09;
+  const r2 = localR * localR;
+  const dabR = Math.max(brushPx * 0.8, 9);   // dabs overlap between vertices
+  ctx.fillStyle = brushColor;
+  for (const m of myChar.userData.paintMeshes) {
+    _sphInv.copy(m.matrixWorld).invert();
+    _sphLocal.copy(worldPoint).applyMatrix4(_sphInv);
+    const pos = m.geometry.attributes.position;
+    const uv = m.geometry.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const dx = pos.getX(i) - _sphLocal.x;
+      const dy = pos.getY(i) - _sphLocal.y;
+      const dz = pos.getZ(i) - _sphLocal.z;
+      if (dx * dx + dy * dy + dz * dz > r2) continue;
+      ctx.beginPath();
+      ctx.arc(uv.getX(i) * ATLAS, (1 - uv.getY(i)) * ATLAS, dabR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 // Raycast a screen point onto my chameleon; paint if it lands on the body.
 function paintRaycast(clientX, clientY) {
   if (!myChar) return false;
   raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
   const hit = raycaster.intersectObject(myChar, true)[0];
-  if (hit && hit.uv) { paintAtUV(hit.uv); paintSplash(clientX, clientY); return true; }
+  if (hit && hit.uv) {
+    paintSphere(hit.point);        // seamless coverage across joints
+    paintAtUV(hit.uv);             // smooth connected stroke on the hit part
+    paintSplash(clientX, clientY);
+    return true;
+  }
   return false;
 }
 function endStroke() { lastDab = null; if (paintDirtyForSync) sendTexture(true); }
