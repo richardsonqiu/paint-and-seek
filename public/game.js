@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=12';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=13';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -820,40 +820,53 @@ function makeSeekerLook(g) {
   g.userData.pose = 'standing';
 }
 
-// The seeker plays FIRST person (own body hidden locally — other players
-// still see the dark hunter via snapshots), with a simple paint gun held in
-// view like a shooter. The gun is built from primitives and attached to the
-// camera so it sways with the look direction.
-let seekerChar = null;      // kept for API compatibility; unused locally now
-function ensureSeekerChar() {}
-function removeSeekerChar() { if (seekerChar) { scene.remove(seekerChar); seekerChar = null; } }
+// The seeker plays OVER-THE-SHOULDER third person (shooter style): you see
+// your own dark hunter from behind-right, holding a paint gun that tilts
+// with your aim. The shoulder offset keeps the crosshair clear of the body.
+let seekerChar = null, paintGun = null, gunPivot = null;
 
-let paintGun = null;
-function ensurePaintGun() {
-  if (paintGun) { paintGun.visible = true; return; }
+// A simple cheerful paint gun built from primitives.
+function buildPaintGun() {
   const g = new THREE.Group();
   const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.07, 0.09, 0.26),
+    new THREE.BoxGeometry(0.09, 0.11, 0.32),
     new THREE.MeshStandardMaterial({ color: 0x3f8f5f, roughness: 0.5 }));
   const grip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.055, 0.13, 0.06),
+    new THREE.BoxGeometry(0.07, 0.16, 0.08),
     new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.7 }));
-  grip.position.set(0, -0.1, 0.08); grip.rotation.x = 0.25;
+  grip.position.set(0, -0.12, 0.1); grip.rotation.x = 0.25;
   const barrel = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.022, 0.022, 0.14, 12),
+    new THREE.CylinderGeometry(0.028, 0.028, 0.18, 12),
     new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.4 }));
-  barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.01, -0.19);
+  barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.012, -0.24);
   const pot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.055, 14, 12),
+    new THREE.SphereGeometry(0.07, 14, 12),
     new THREE.MeshStandardMaterial({ color: 0xff8a00, roughness: 0.35 }));
-  pot.position.set(0, 0.09, 0.02);
+  pot.position.set(0, 0.11, 0.03);
   g.add(body, grip, barrel, pot);
-  g.position.set(0.24, -0.2, -0.5);   // lower-right of the view, muzzle forward
-  g.rotation.y = -0.06;
-  camera.add(g);
-  paintGun = g;
+  return g;
 }
-function hidePaintGun() { if (paintGun) paintGun.visible = false; }
+
+function ensureSeekerChar(p) {
+  if (!seekerChar) {
+    seekerChar = buildCharacter(null);
+    makeSeekerLook(seekerChar);
+    // Gun held out front at chest height; the pivot pitches with the aim.
+    gunPivot = new THREE.Group();
+    gunPivot.position.set(0.34, 1.0, 0.1);   // right hand, unscaled rig units
+    paintGun = buildPaintGun();
+    paintGun.position.set(0, 0, -0.28);
+    gunPivot.add(paintGun);
+    seekerChar.userData.joints.upper.add(gunPivot);
+    scene.add(seekerChar);
+  }
+  seekerChar.position.set(p.x, p.y || 0, p.z);
+  seekerChar.rotation.y = p.ry || 0;
+  if (gunPivot) gunPivot.rotation.x = cam.pitch * 0.8;  // gun tracks the aim
+}
+function removeSeekerChar() {
+  if (seekerChar) { scene.remove(seekerChar); seekerChar = null; paintGun = null; gunPivot = null; }
+}
 
 function syncHunt(bodies, skipMine) {
   const seen = new Set();
@@ -930,7 +943,7 @@ function updateRemoteAnims(dt, t) {
     myChar.scale.y += (HIDER_SCALE * stretch - myChar.scale.y) * Math.min(1, dt * 14);
   }
   // The local seeker's own body: swing the limbs while striding.
-  if (seekerChar && seekerPos) {
+  if (seekerChar && seekerPos && !seekerPeek) {
     const j = seekerChar.userData.joints;
     const lp = seekerChar.userData.lastPos || (seekerChar.userData.lastPos = { x: seekerPos.x, z: seekerPos.z });
     const speed = Math.hypot(seekerPos.x - lp.x, seekerPos.z - lp.z) / Math.max(dt, 0.001);
@@ -1425,7 +1438,7 @@ function applyMovement(dt) {
     const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
     autoUnstick(p, dt);
-    ensurePaintGun();
+    ensureSeekerChar(p);
     sendSeek();
   } else if (iSpectate()) {
     // Caught: roam freely as a spectator (camera-relative, on the floor).
@@ -1521,12 +1534,37 @@ function updateCamera() {
     camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
   };
 
+  // Over-the-shoulder shooter camera: pivot at the hunter's right shoulder,
+  // fixed distance (no zooming out to survey rooms), crosshair clear of the
+  // body. Peeking drops the pivot to floor level to see under furniture.
+  const overShoulder = (p) => {
+    cam.pitch = clamp(cam.pitch, -0.55, 0.85);
+    const f = forwardXZ(cam.yaw);
+    const rx = -f.z, rz = f.x;                       // camera-right
+    const side = 0.5, dist = 1.9;
+    const pivotY = (p.y || 0) + (seekerPeek ? 0.42 : 1.3);
+    const px = p.x + rx * side, pz = p.z + rz * side;
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    // View direction (pitch+ looks down), camera sits behind the pivot.
+    const vx = f.x * cp, vy = -sp, vz = f.z * cp;
+    let cx = px - vx * dist, cy = Math.max(pivotY - vy * dist, (p.y || 0) + 0.15), cz = pz - vz * dist;
+    if (collisionMeshes.length) {                    // never bury in a wall
+      _ro.set(px, pivotY, pz);
+      _rd.set(cx - px, cy - pivotY, cz - pz);
+      const full = _rd.length() || 1; _rd.normalize();
+      _rc.set(_ro, _rd); _rc.far = full;
+      const h = _rc.intersectObjects(collisionMeshes, true)[0];
+      if (h && h.distance < full) {
+        const d = Math.max(0.15, h.distance - 0.1);
+        cx = px + _rd.x * d; cy = pivotY + _rd.y * d; cz = pz + _rd.z * d;
+      }
+    }
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(px + vx * 8, pivotY + vy * 8, pz + vz * 8);
+  };
+
   if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
-  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
-    // Shooter POV: through the hunter's own eyes, paint gun in hand.
-    // Peeking drops the eye to floor level to look under furniture.
-    firstPerson(seekerPos, seekerPeek ? 0.32 : 1.15);
-  }
+  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) overShoulder(seekerPos);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
     if (mine) thirdPerson(mine, HIDER_SCALE * 2);
@@ -1844,8 +1882,8 @@ function seekerShoot() {
   spawnProjectile(muzzle, p, color);
   // A tiny recoil kick on the gun sells the shot.
   if (paintGun) {
-    paintGun.position.z = -0.42;
-    setTimeout(() => { if (paintGun) paintGun.position.z = -0.5; }, 90);
+    paintGun.position.z = -0.18;
+    setTimeout(() => { if (paintGun) paintGun.position.z = -0.28; }, 90);
   }
 }
 $('fireBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); seekerShoot(); });
@@ -2199,7 +2237,7 @@ function renderGame() {
   // caught/spectating self) comes from syncHunt.
   if (hiderControls()) ensureMyChar(myBody);
   else removeMyChar();
-  if (!(phase === 'hunt' && role === 'seeker')) { removeSeekerChar(); hidePaintGun(); }
+  if (!(phase === 'hunt' && role === 'seeker')) removeSeekerChar();
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
 
