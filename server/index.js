@@ -137,8 +137,10 @@ function endRound(room, reason) {
 function maybeEndEarly(room) {
   if (room.phase !== 'hunt') return;
   if (room.remainingHiders().length === 0) endRound(room, 'allfound');
-  // Every seeker shot themselves dry — the hiders win outright.
-  else if (room.seekers().length > 0 && room.activeSeekers().length === 0) {
+  // No able seeker left (all shot dry — or the last one quit): hiders win.
+  // Only checked on events, so solo practice rounds (started with zero
+  // seekers) are unaffected.
+  else if (room.activeSeekers().length === 0) {
     endRound(room, 'seekersout');
   }
 }
@@ -341,11 +343,16 @@ io.on('connection', (socket) => {
   function cleanup() {
     const r = room();
     if (!r) return;
+    const leaver = r.players.get(socket.id);
     r.removePlayer(socket.id);
     if (r.players.size === 0) {
       store.delete(r.code);
     } else {
-      // If a phase is mid-flight and nobody can advance it, re-check.
+      // Tell everyone who left, then re-check whether the round can even
+      // continue (e.g. the only seeker or last hider just walked out).
+      if (leaver) {
+        io.to(r.code).emit('playerleft', { name: leaver.name, role: leaver.role });
+      }
       maybeEndEarly(r);
       broadcast(r);
     }

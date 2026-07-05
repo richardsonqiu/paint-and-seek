@@ -127,8 +127,20 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   padding: calc(env(safe-area-inset-top, 0px) + 10px) 12px 8px;
   pointer-events: none;
 }
-.hud-left, .hud-right { display: flex; gap: 6px; flex: 1; }
+.hud-left, .hud-right { display: flex; gap: 6px; flex: 1; align-items: center; }
 .hud-right { justify-content: flex-end; }
+
+/* In-game quit button (always available; opens a confirm dialog) */
+.quit-btn {
+  width: 32px; height: 32px; border-radius: 10px; cursor: pointer;
+  background: var(--card); border: 2.5px solid #3a2c1a; color: var(--ink);
+  font-size: 15px; font-weight: 800; font-family: var(--font); line-height: 1;
+  box-shadow: 0 3px 0 rgba(58,44,26,.28); pointer-events: auto; flex: 0 0 auto;
+}
+.quit-btn:active { transform: translateY(2px); box-shadow: none; }
+.quit-card .quit-actions { display: flex; gap: 10px; margin-top: 14px; }
+.quit-card .quit-actions .btn { flex: 1; }
+.quit-card p { margin: 6px 0 0; }
 .pill {
   font-size: 13px; font-weight: 800; background: var(--card); color: var(--ink);
   padding: 6px 12px; border-radius: 99px; white-space: nowrap;

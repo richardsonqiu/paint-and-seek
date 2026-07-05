@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=13';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=14';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -146,6 +146,30 @@ function doJoin(code) {
 
 // ---- Lobby --------------------------------------------------------------
 $('leaveLobbyBtn').onclick = () => { socket.emit('leave'); inRoom = false; snap = null; show('home'); };
+
+// ---- In-game quit (with confirmation) ------------------------------------
+function setQuitOpen(open) {
+  $('quitOverlay').classList.toggle('hidden', !open);
+}
+function quitGame() {
+  socket.emit('leave');
+  inRoom = false; snap = null;
+  myBody = null; myBodyRound = -1;
+  seekerPos = null; seekerRound = -1;
+  climbing = false; seekerPeek = false;
+  openSheet(null); setEmotesOpen(false); setQuitOpen(false);
+  removeMyChar(); removeSeekerChar(); clearChars(); clearSplats(); syncBeacons([]);
+  show('home');
+  SFX.click();
+}
+$('quitBtn').addEventListener('click', () => { setQuitOpen(true); SFX.click(); });
+$('quitCancel').addEventListener('click', () => { setQuitOpen(false); SFX.click(); });
+$('quitConfirm').addEventListener('click', quitGame);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('screen-game').classList.contains('active')) {
+    setQuitOpen($('quitOverlay').classList.contains('hidden'));
+  }
+});
 $('startBtn').onclick = () => socket.emit('start');
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
@@ -2425,6 +2449,10 @@ function showWhistleDirection(x, z) {
   clearTimeout(whistleDirTimer);
   whistleDirTimer = setTimeout(() => el.classList.add('hidden'), 2000);
 }
+socket.on('playerleft', ({ name }) => {
+  toast(`🚪 ${name} left the game`, 2200);
+  SFX.caught();
+});
 socket.on('blast', ({ x, y, z, color }) => paintSplat(x, y, z, color));
 socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));
