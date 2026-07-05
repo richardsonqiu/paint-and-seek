@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=11';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=12';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -353,14 +353,20 @@ const cam = { yaw: 0, pitch: 0.35 };       // shared look angles
 // straight-up/straight-down, where lookAt's up-vector flips the whole view.
 const TP = { dist: 0.95, pitchMin: -0.42, pitchMax: 1.2 };  // world distance (zoomable); negative pitch = look up
 const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
-const MOVE_SPEED = 3.8;                    // seeker: a heavy stalk, not a sprint
+// Zoom range is deliberately tight: players should see roughly ONE room at a
+// time from their point of view, not survey half the map.
+const ZOOM_HIDER = { min: 0.45, max: 2.0 };
+const ZOOM_SEEKER = { min: 1.2, max: 2.8 };
+const LOOK_SENS = 0.0028;                  // drag-look sensitivity (was too twitchy)
+const MOVE_SPEED = 2.8;                    // seeker: a careful stalk
 // Hiders are tiny toy-sized mannequins (~0.34m tall) so they can genuinely
 // melt into the furniture — the headroom rule still keeps them out of
-// unspottable under-furniture gaps. The seeker is a full-size mannequin.
+// unspottable under-furniture gaps. The seeker is bigger, but not a giant —
+// it has to fit through the same doorways.
 const HIDER_SCALE = 0.18;
-const SEEKER_SCALE = 1.0;
-const SEEKER_CAM_DIST = 3.2;               // third-person framing for the big hunter
-const HIDER_MOVE_SPEED = 3.3;
+const SEEKER_SCALE = 0.7;
+const SEEKER_CAM_DIST = 2.4;               // third-person framing for the hunter
+const HIDER_MOVE_SPEED = 2.4;
 
 function initThree() {
   if (threeReady) return;
@@ -391,6 +397,7 @@ function initThree() {
   sc.near = 1; sc.far = 120; sc.left = -28; sc.right = 28; sc.top = 28; sc.bottom = -28;
   scene.add(sunLight);
   scene.add(sunLight.target);
+  scene.add(camera);   // the camera carries the seeker's paint-gun viewmodel
 
   window.addEventListener('resize', resize);
   threeReady = true;
@@ -813,17 +820,40 @@ function makeSeekerLook(g) {
   g.userData.pose = 'standing';
 }
 
-// The local seeker's own body (third person — you see yourself hunt).
-let seekerChar = null;
-function ensureSeekerChar(p) {
-  if (!seekerChar) {
-    seekerChar = buildCharacter(null);
-    makeSeekerLook(seekerChar);
-    scene.add(seekerChar);
-  }
-  seekerChar.position.set(p.x, p.y || 0, p.z);
-}
+// The seeker plays FIRST person (own body hidden locally — other players
+// still see the dark hunter via snapshots), with a simple paint gun held in
+// view like a shooter. The gun is built from primitives and attached to the
+// camera so it sways with the look direction.
+let seekerChar = null;      // kept for API compatibility; unused locally now
+function ensureSeekerChar() {}
 function removeSeekerChar() { if (seekerChar) { scene.remove(seekerChar); seekerChar = null; } }
+
+let paintGun = null;
+function ensurePaintGun() {
+  if (paintGun) { paintGun.visible = true; return; }
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.07, 0.09, 0.26),
+    new THREE.MeshStandardMaterial({ color: 0x3f8f5f, roughness: 0.5 }));
+  const grip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.055, 0.13, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.7 }));
+  grip.position.set(0, -0.1, 0.08); grip.rotation.x = 0.25;
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.022, 0.022, 0.14, 12),
+    new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.4 }));
+  barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.01, -0.19);
+  const pot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 14, 12),
+    new THREE.MeshStandardMaterial({ color: 0xff8a00, roughness: 0.35 }));
+  pot.position.set(0, 0.09, 0.02);
+  g.add(body, grip, barrel, pot);
+  g.position.set(0.24, -0.2, -0.5);   // lower-right of the view, muzzle forward
+  g.rotation.y = -0.06;
+  camera.add(g);
+  paintGun = g;
+}
+function hidePaintGun() { if (paintGun) paintGun.visible = false; }
 
 function syncHunt(bodies, skipMine) {
   const seen = new Set();
@@ -838,9 +868,12 @@ function syncHunt(bodies, skipMine) {
     if (!g) {
       g = buildCharacter(b.paint);
       g.userData.hiderId = b.id;
-      g.userData.pose = 'standing';
+      // Leave pose null so the first sync ALWAYS runs setPose — presetting
+      // 'standing' skipped it, so standing remote hiders never got their
+      // tiny scale applied and rendered person-sized (the "giant hider" bug).
+      g.userData.pose = null;
       g.userData.isSeeker = !!b.seeker;
-      if (b.seeker) makeSeekerLook(g);   // hiders see the big dark hunter coming
+      if (b.seeker) makeSeekerLook(g);   // hiders see the dark hunter coming
       scene.add(g); charGroups.set(b.id, g);
     }
     if (!b.seeker) applyPaintUrl(g, b.paint);
@@ -870,20 +903,24 @@ function updateRemoteAnims(dt, t) {
     g.position.y += (tgt.y - g.position.y) * k;
     g.position.z += (tgt.z - g.position.z) * k;
     g.rotation.y += angleDelta(g.rotation.y, tgt.ry) * k;
-    if ((g.userData.pose || 'standing') !== 'standing') continue;
+    if ((g.userData.pose || 'standing') === 'climb') continue;   // held on the wall
     const j = g.userData.joints;
     const speed = Math.hypot(g.position.x - px, g.position.z - pz) / Math.max(dt, 0.001);
     if (speed > 0.25) {
+      // Travelling remotes stand up and walk regardless of their held pose.
+      if (!g.userData.rwalking) { setPose(g, 'standing'); g.userData.rwalking = true; }
       g.userData.wp = (g.userData.wp || 0) + dt * (6 + speed * 3.5);
       const a = Math.sin(g.userData.wp) * 0.5;
       j.legL.rotation.x = a; j.legR.rotation.x = -a;
       j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
-    } else if (g.userData.wp) {
+    } else if (g.userData.rwalking) {
+      g.userData.rwalking = false;
       g.userData.wp = 0;
-      j.legL.rotation.x = j.legR.rotation.x = 0;
-      j.armL.rotation.x = j.armR.rotation.x = 0;
+      setPose(g, g.userData.pose || 'standing');  // settle back into the pose
     }
-    j.upper.scale.y = 1 + Math.sin(t * 2.1 + (g.userData.hiderId || '').length) * 0.015;
+    if ((g.userData.pose || 'standing') === 'standing' || g.userData.rwalking) {
+      j.upper.scale.y = 1 + Math.sin(t * 2.1 + (g.userData.hiderId || '').length) * 0.015;
+    }
   }
   if (myChar && myBody && !climbing && myBody.pose === 'standing') {
     const j = myChar.userData.joints;
@@ -1084,9 +1121,11 @@ function slideMove(px, pz, nx, nz, y, rad, midY) {
 }
 
 // ---- Jumping & climbing ---------------------------------------------------
-// Snappy arcade jump: strong gravity + strong impulse = quick, punchy arc
-// (~1.15m apex in ~0.55s round trip) instead of the old floaty drift.
-const GRAVITY = 32, JUMP_VEL = 8.6, CLING_RANGE = 1.2, ROOF = 2.6;
+// Snappy arcade jumps scaled to each body: the tiny hider hops ~0.5m (onto
+// sofa seats and low props — walls need the climb), the full-size seeker
+// clears ~1.15m.
+const GRAVITY = 32, HIDER_JUMP_VEL = 5.8, SEEKER_JUMP_VEL = 8.6;
+const CLING_RANGE = 1.2, ROOF = 2.6;
 const CLING_GAP = 0.09;  // half the tiny body's depth — flush without clipping in
 const CLING_REACH = 0.5; // re-stick range: detach promptly once the surface ends
 const JUMP_BUFFER_MS = 160; // press slightly early and it still fires on landing
@@ -1111,6 +1150,16 @@ function depenetrate(p, rayY, rad) {
 // stand)? Used to fix bad spawns — never start wedged inside furniture.
 function isClear(x, y, z, rad) {
   if (!hasFloor(x, z, y)) return false;
+  // Reject furniture tops: a spot that sits noticeably ABOVE its
+  // surroundings is a counter/table/wardrobe, not floor — spawning up there
+  // can trap players in cabinet channels. Gentle terrain (hills) passes,
+  // since neighbours rise with it.
+  const top = surfaceTop(x, z);
+  let minAround = Infinity;
+  for (const [dx, dz] of [[0.9, 0], [-0.9, 0], [0, 0.9], [0, -0.9]]) {
+    minAround = Math.min(minAround, surfaceTop(x + dx, z + dz));
+  }
+  if (isFinite(minAround) && top - minAround > 0.35) return false;
   const gy = groundUnder(x, y + 0.4, z);
   if (clearanceAbove(x, gy, z) < MIN_HEADROOM_HIDER) return false;
   for (const [dx, dz] of DEPEN_DIRS) {
@@ -1144,7 +1193,7 @@ function clearanceAbove(x, y, z) {
 // 0.6 blocks the sofa/bed crawl-space (solid skirts → unspottable) but still
 // lets you duck between open table legs, where a seeker CAN spot you.
 const MIN_HEADROOM_HIDER = 0.6;
-const MIN_HEADROOM_SEEKER = 1.4;  // the (taller) seeker can't duck under tables
+const MIN_HEADROOM_SEEKER = 1.15; // the (taller) seeker can't duck under tables
 
 // Allow a move if the destination has enough headroom — OR at least as much
 // as where you already stand. Blocking on absolute clearance alone froze
@@ -1244,6 +1293,30 @@ function followBehind(ry, dt) {
   cam.yaw += angleDelta(cam.yaw, ry) * Math.min(1, dt * 3.5);
 }
 
+// Last-resort trap escape. Baked interior models hide one-way pockets
+// (depenetration can shove a body past a lip it can't walk back over).
+// If the player is HOLDING a direction but hasn't actually moved for a
+// couple of seconds, relocate to the nearest clear floor spot.
+function autoUnstick(p, dt) {
+  if (!isMovingInput() || climbing) { p._anchor = null; return; }
+  // Anchor-based: wall-sliding jitters a little every frame, so measure NET
+  // displacement over a window instead of per-frame movement.
+  if (!p._anchor) p._anchor = { x: p.x, z: p.z, t: 0 };
+  p._anchor.t += dt;
+  if (Math.hypot(p.x - p._anchor.x, p.z - p._anchor.z) > 0.45) {
+    p._anchor = { x: p.x, z: p.z, t: 0 };
+    return;
+  }
+  if (p._anchor.t > 2.5) {
+    p._anchor = null;
+    const [nx, nz] = findClearSpawn(p.x, p.z, 0.3);
+    if (nx !== p.x || nz !== p.z) {
+      p.x = nx; p.z = nz; p.y = surfaceTop(nx, nz) + 0.02; p.vy = 0;
+      toast('🪄 Popped free of a tight spot!', 1500);
+    }
+  }
+}
+
 function applyMovement(dt) {
   const b = bounds();
   if (!hiderControls()) climbing = false;
@@ -1292,7 +1365,7 @@ function applyMovement(dt) {
         stopClimb();                                                      // otherwise drop
       }
       if (climbing) p.vy = 0;
-      if (wantJump()) { consumeJump(); stopClimb(); p.vy = JUMP_VEL * 0.55; }
+      if (wantJump()) { consumeJump(); stopClimb(); p.vy = HIDER_JUMP_VEL * 0.55; }
     } else {
       // Camera-relative walk.
       const mv = moveVector();
@@ -1310,7 +1383,7 @@ function applyMovement(dt) {
       }
       depenetrate(p, RAYY, HRAD);
       if (wantJump() && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.04) {
-        consumeJump(); p.vy = JUMP_VEL; SFX.click();
+        consumeJump(); p.vy = HIDER_JUMP_VEL; SFX.click();
       }
       p.vy -= GRAVITY * dt;
       let ny = (p.y || 0) + p.vy * dt;
@@ -1319,19 +1392,24 @@ function applyMovement(dt) {
       const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
       p.y = ny;
     }
+    autoUnstick(p, dt);
     nearSurface = !climbing && (frameCount % 3 === 0 ? detectSurface(p) : nearSurface);
     ensureMyChar(myBody);
     if (joyVec.x || joyVec.y || climbing || p.vy !== 0) sendMove(false);
   } else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     const p = seekerPos; p.vy = p.vy || 0;
-    const SRAD = 0.4, RAYY = (p.y || 0) + 0.35;
+    // Slim on purpose: the flat's bedroom doorways are narrow, and a fat
+    // radius trapped seekers inside. Slight visual clipping at door edges is
+    // far better than being stuck.
+    const SRAD = 0.22, RAYY = (p.y || 0) + 0.35;
     // Third person: move camera-relative and turn the body to face travel.
     const mv = moveVector();
+    // FPS: the body always faces where the camera looks (the gun IS the aim).
+    p.ry = cam.yaw;
     if (mv) {
-      p.ry = lerpAngle(p.ry || 0, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
-      followBehind(p.ry, dt);          // moving: camera swings back behind you
-      let nx = clamp(p.x + mv.x * mv.mag * MOVE_SPEED * dt, b.minX, b.maxX);
-      let nz = clamp(p.z + mv.z * mv.mag * MOVE_SPEED * dt, b.minZ, b.maxZ);
+      const spd = seekerPeek ? MOVE_SPEED * 0.45 : MOVE_SPEED;  // creep while peeking
+      let nx = clamp(p.x + mv.x * mv.mag * spd * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + mv.z * mv.mag * spd * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
       const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
       if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER)) {
@@ -1339,15 +1417,15 @@ function applyMovement(dt) {
       }
     }
     depenetrate(p, RAYY, SRAD);
-    if (wantJump() && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.04) { consumeJump(); p.vy = JUMP_VEL; }
+    if (wantJump() && (p.y || 0) <= groundUnder(p.x, p.y || 0, p.z) + 0.04) { consumeJump(); p.vy = SEEKER_JUMP_VEL; }
     p.vy -= GRAVITY * dt;
     let ny = (p.y || 0) + p.vy * dt;
     const g = groundUnder(p.x, ny, p.z);
     if (ny <= g) { ny = g; p.vy = 0; }
     const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
-    ensureSeekerChar(p);
-    seekerChar.rotation.y = p.ry || 0;
+    autoUnstick(p, dt);
+    ensurePaintGun();
     sendSeek();
   } else if (iSpectate()) {
     // Caught: roam freely as a spectator (camera-relative, on the floor).
@@ -1385,7 +1463,10 @@ function sendSeek() {
   const now = Date.now();
   if (now - lastSeekSent < 120) return;
   lastSeekSent = now;
-  socket.emit('seekmove', { x: seekerPos.x, y: seekerPos.y || 0, z: seekerPos.z, ry: seekerPos.ry || 0 });
+  socket.emit('seekmove', {
+    x: seekerPos.x, y: seekerPos.y || 0, z: seekerPos.z, ry: seekerPos.ry || 0,
+    pose: seekerPeek ? 'kneel' : 'standing',
+  });
 }
 
 function updateCamera() {
@@ -1431,17 +1512,21 @@ function updateCamera() {
     camera.position.set(cx, cy, cz);
     camera.lookAt(target.x, lookY, target.z);
   };
-  const firstPerson = (pos) => {
+  const firstPerson = (pos, eyeH) => {
     cam.pitch = clamp(cam.pitch, FP.pitchMin, FP.pitchMax);
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     const lx = Math.sin(cam.yaw) * cp, lz = Math.cos(cam.yaw) * cp;
-    const eye = (pos.y || 0) + FP.eye;
+    const eye = (pos.y || 0) + (eyeH || FP.eye);
     camera.position.set(pos.x, eye, pos.z);
     camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
   };
 
   if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
-  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) thirdPerson(seekerPos, SEEKER_SCALE);
+  else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
+    // Shooter POV: through the hunter's own eyes, paint gun in hand.
+    // Peeking drops the eye to floor level to look under furniture.
+    firstPerson(seekerPos, seekerPeek ? 0.32 : 1.15);
+  }
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
     if (mine) thirdPerson(mine, HIDER_SCALE * 2);
@@ -1449,26 +1534,28 @@ function updateCamera() {
   }
 }
 
-// Procedural walk cycle for the local hider: swing legs (and arms counter)
-// while moving; settle back to the chosen pose when still.
+// Procedural walk cycle for the local hider. Works in EVERY pose: while
+// travelling the figure stands up and walks (you can't stay curled in a ball
+// mid-stride), then settles back into the chosen pose the moment it stops.
 let walkPhase = 0;
 function updateWalk(dt) {
   if (!myChar || !hiderControls() || climbing) return;
-  if (myBody.pose !== 'standing') return; // other poses are held
   const j = myChar.userData.joints;
   const moving = Math.abs(joyVec.x) > 0.05 || Math.abs(joyVec.y) > 0.05;
   if (moving) {
+    if (!myChar.userData.walking) { setPose(myChar, 'standing'); myChar.userData.walking = true; }
     walkPhase += dt * 11;
     const a = Math.sin(walkPhase) * 0.5;
     j.legL.rotation.x = a; j.legR.rotation.x = -a;
     j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
-  } else if (walkPhase !== 0) {
+  } else if (myChar.userData.walking || walkPhase !== 0) {
     walkPhase = 0;
-    setPose(myChar, myBody.pose); // restore straight limbs
+    myChar.userData.walking = false;
+    setPose(myChar, myBody.pose); // settle back into the chosen pose
   }
 }
 
-let _jumpVis = null, _climbVis = null, _whisVis = null, _zoomVis = null;
+let _jumpVis = null, _climbVis = null, _whisVis = null, _zoomVis = null, _fireVis = null;
 function updateActionButtons() {
   const canMove = hiderControls();
   const seekerHunt = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
@@ -1483,6 +1570,12 @@ function updateActionButtons() {
     _whisVis = wv;
     $('whistleBtn').classList.toggle('hidden', !wv);
     $('whistleMeter').classList.toggle('hidden', !wv);
+  }
+  if (seekerHunt !== _fireVis) {
+    _fireVis = seekerHunt;
+    $('fireBtn').classList.toggle('hidden', !seekerHunt);
+    $('peekBtn').classList.toggle('hidden', !seekerHunt);
+    if (!seekerHunt && seekerPeek) { seekerPeek = false; $('peekBtn').classList.remove('on'); }
   }
   $('clingBtn').classList.toggle('on', climbing);
   $('clingBtn').querySelector('.lbl').textContent = climbing ? 'Drop' : 'Wall';
@@ -1557,7 +1650,14 @@ function joyMove(e) {
   const d = Math.hypot(dx, dy);
   if (d > max) { dx = dx / d * max; dy = dy / d * max; }
   knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-  joyVec = { x: dx / max, y: -dy / max };
+  // Deadzone + squared response: small deflections barely creep, so precise
+  // positioning doesn't send you flying (the stick felt hair-trigger before).
+  const raw = Math.min(1, Math.hypot(dx, dy) / max);
+  const DEAD = 0.14;
+  const t = raw < DEAD ? 0 : (raw - DEAD) / (1 - DEAD);
+  const mag = t * t;
+  if (mag === 0 || raw === 0) { joyVec = { x: 0, y: 0 }; return; }
+  joyVec = { x: (dx / max / raw) * mag, y: (-dy / max / raw) * mag };
 }
 function joyEnd(e) {
   if (e.pointerId !== joyId) return;
@@ -1580,6 +1680,8 @@ window.addEventListener('keydown', (e) => {
   if (k === ' ') { jumpAskedAt = performance.now(); e.preventDefault(); }
   if (k === 'e') { if (climbing) { stopClimb(); sendMove(true); } else startClimb(); }
   if (k === '1' || k === 'q') sendWhistle();
+  if (k === 'x') seekerShoot();       // fire at the crosshair (desktop)
+  if (k === 'c') togglePeek();        // peek under furniture (desktop)
   if (k === 'f') { if (hiderControls()) openSheet(sheetOpen === 'paint' ? null : 'paint'); } // paint mode, like the original
   if (k === 'r') { if (hiderControls()) openSheet(sheetOpen === 'pose' ? null : 'pose'); }
   if (k === '=' || k === '+') applyZoom(-0.35);
@@ -1597,11 +1699,12 @@ function keyboardVec() {
 }
 // Zoom the third-person camera in/out (paint detail up close, survey from
 // afar): mouse wheel, pinch, +/- keys, or the on-screen buttons.
-function canZoom() {
-  return hiderControls() || iSpectate() ||
-    (snap && snap.phase === 'hunt' && snap.myRole === 'seeker');
+// Zoom is a third-person affordance; the FPS seeker has no camera distance.
+function canZoom() { return hiderControls() || iSpectate(); }
+function applyZoom(delta) {
+  const z = (snap && snap.phase === 'hunt' && snap.myRole === 'seeker') ? ZOOM_SEEKER : ZOOM_HIDER;
+  TP.dist = clamp(TP.dist + delta, z.min, z.max);
 }
-function applyZoom(delta) { TP.dist = clamp(TP.dist + delta, 0.45, 8); }
 $('stage').addEventListener('wheel', (e) => {
   if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
 }, { passive: false });
@@ -1674,10 +1777,12 @@ canvas.addEventListener('pointermove', (e) => {
   // "Grab the world": drag left → look left (camera pans WITH the finger).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
-  // Panning is for standing still — while moving, the chase camera owns the
-  // yaw (it swings back behind the character); pitch stays adjustable.
-  if (!isMovingInput()) cam.yaw += dx * 0.005;
-  cam.pitch += dy * 0.005;
+  // Third-person panning is for standing still — while moving, the chase
+  // camera owns the yaw. The FPS seeker looks freely at all times (turning
+  // while running is the whole point of a shooter).
+  const fpsSeeker = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
+  if (fpsSeeker || !isMovingInput()) cam.yaw += dx * LOOK_SENS;
+  cam.pitch += dy * LOOK_SENS;
 });
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);
@@ -1707,20 +1812,22 @@ function handleTap(clientX, clientY) {
     // colour the surface actually shows on screen — the best camouflage match.
     const color = sampleScreenColor(clientX, clientY);
     if (color) { setBrushColor(color); rememberColor(color); SFX.click(); toast(`🎨 Colour picked`, 700); }
-  } else if (snap.phase === 'hunt' && snap.myRole === 'seeker') {
-    seekerShoot(clientX, clientY);
   }
+  // Seekers do NOT shoot on tap — taps/drags are camera-only. The gun always
+  // points at the crosshair and fires from the Fire button (shooter-style),
+  // so adjusting the view can never waste a paint charge.
 }
 
-// Seeker fires a paint blast at the tapped point. 1s reload (no spam). The
-// blast (and any catch) is resolved + broadcast by the server, so the splat
-// shows for everyone via the 'blast' event.
+// Seeker fires a paint blast at the CROSSHAIR (screen centre). 1s reload.
+// The blast (and any catch) is resolved + broadcast by the server, so the
+// splat shows for everyone via the 'blast' event.
 const SHOOT_COLORS = ['#ff3bd0', '#ffd23b', '#3bd1ff', '#7CFC00', '#ff6b3b', '#b14bff'];
 let lastShotAt = 0;
-function seekerShoot(clientX, clientY) {
+function seekerShoot() {
+  if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker') return;
   const now = Date.now();
   if (now - lastShotAt < 1000) return; // reloading
-  raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);  // dead centre
   const targets = [];
   if (roomGroup) targets.push(roomGroup);
   for (const g of charGroups.values()) targets.push(g);
@@ -1729,10 +1836,34 @@ function seekerShoot(clientX, clientY) {
   lastShotAt = now;
   const color = SHOOT_COLORS[Math.floor(Math.random() * SHOOT_COLORS.length)];
   socket.emit('shoot', { x: p.x, y: p.y, z: p.z, color });
-  // Local feedback: muzzle sound + a paintball flying from the camera.
+  // Local feedback: muzzle sound + a paintball flying from the gun barrel.
   SFX.shoot();
-  spawnProjectile(camera.position.clone().addScaledVector(_rd.set(0, -0.2, 0), 1), p, color);
+  const muzzle = paintGun
+    ? paintGun.getWorldPosition(new THREE.Vector3())
+    : camera.position.clone().addScaledVector(_rd.set(0, -0.2, 0), 1);
+  spawnProjectile(muzzle, p, color);
+  // A tiny recoil kick on the gun sells the shot.
+  if (paintGun) {
+    paintGun.position.z = -0.42;
+    setTimeout(() => { if (paintGun) paintGun.position.z = -0.5; }, 90);
+  }
 }
+$('fireBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); seekerShoot(); });
+
+// Peek: the seeker drops low to check UNDER furniture — camera sinks to
+// floor level and the body kneels. Toggle.
+let seekerPeek = false;
+function togglePeek() {
+  if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker') return;
+  seekerPeek = !seekerPeek;
+  $('peekBtn').classList.toggle('on', seekerPeek);
+  if (seekerChar) {
+    setPose(seekerChar, seekerPeek ? 'kneel' : 'standing');
+    seekerChar.userData.pose = seekerPeek ? 'kneel' : 'standing';
+  }
+  SFX.click();
+}
+$('peekBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); togglePeek(); });
 
 // ---- Paintball projectiles + splats --------------------------------------
 const projectiles = [];
@@ -1778,6 +1909,9 @@ function paintSplat(x, y, z, color) {
     m.scale.setScalar(1 + t * 2.4); m.material.opacity = 0.9 * (1 - t);
     requestAnimationFrame(fade);
   })();
+  // Skip the persistent blob if it landed basically in the shooter's face —
+  // a wall of paint over the camera blinds the player.
+  if (camera && camera.position.distanceTo(new THREE.Vector3(x, y, z)) < 1.6) return;
   const d = new THREE.Mesh(
     new THREE.SphereGeometry(0.3, 10, 8),
     new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.5 }));
@@ -1931,9 +2065,19 @@ function paintSplash(clientX, clientY) {
   $('emoteFloat').appendChild(f); setTimeout(() => f.remove(), 450);
 }
 
-// ---- Emotes -------------------------------------------------------------
+// ---- Emotes (collapsed behind one toggle so they never block the view) ---
+let emotesOpen = false;
+function setEmotesOpen(open) {
+  emotesOpen = open;
+  $('emoteBar').classList.toggle('hidden', !open);
+  $('emoteToggle').classList.toggle('open', open);
+}
+$('emoteToggle').addEventListener('click', () => { setEmotesOpen(!emotesOpen); SFX.click(); });
 document.querySelectorAll('.emote').forEach((b) =>
-  b.addEventListener('click', () => socket.emit('emote', { emoji: b.dataset.emoji })));
+  b.addEventListener('click', () => {
+    socket.emit('emote', { emoji: b.dataset.emoji });
+    setEmotesOpen(false);            // picked — tuck the row away again
+  }));
 function flyEmote(emoji) {
   const f = document.createElement('div'); f.className = 'fly'; f.textContent = emoji;
   f.style.left = 20 + Math.random() * 60 + '%'; f.style.top = 55 + Math.random() * 20 + '%';
@@ -2055,7 +2199,7 @@ function renderGame() {
   // caught/spectating self) comes from syncHunt.
   if (hiderControls()) ensureMyChar(myBody);
   else removeMyChar();
-  if (!(phase === 'hunt' && role === 'seeker')) removeSeekerChar();
+  if (!(phase === 'hunt' && role === 'seeker')) { removeSeekerChar(); hidePaintGun(); }
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
 
@@ -2071,7 +2215,8 @@ function renderGame() {
   $('seekerTools').classList.toggle('hidden', !isSeekerHunt);
   $('joystick').classList.toggle('hidden', !(canMove || isSeekerHunt || spectating));
   $('crosshair').classList.toggle('hidden', !isSeekerHunt);
-  $('emoteBar').classList.toggle('hidden', phase !== 'hunt');
+  $('emoteToggle').classList.toggle('hidden', phase !== 'hunt');
+  if (phase !== 'hunt' && emotesOpen) setEmotesOpen(false);
 
   // Seeker paint-gun health: misses cost paint; dry = eliminated.
   const meP = snap.players.find((p) => p.id === myId);
@@ -2223,8 +2368,25 @@ socket.on('whistle', ({ id, x, y, z, auto }) => {
   if (id === myId) {
     myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
     toast(auto ? '😗 Your auto-whistle went off!' : '😗 You whistled — timer reset!', 1300);
+  } else if (snap && snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
+    showWhistleDirection(x, z);
   }
 });
+
+// Swing an on-screen arrow toward the whistle source (relative to where the
+// seeker is looking) — sound alone is hard to localise on phone speakers.
+let whistleDirTimer = null;
+function showWhistleDirection(x, z) {
+  const bearing = Math.atan2(x - seekerPos.x, z - seekerPos.z);
+  const rel = angleDelta(cam.yaw, bearing);   // 0 = straight ahead
+  const el = $('whistleDir');
+  $('whistleArrow').style.transform = `rotate(${(-rel - Math.PI / 2).toFixed(3)}rad)`;
+  el.classList.remove('hidden');
+  el.style.animation = 'none'; void el.offsetWidth;  // restart the fade
+  el.style.animation = '';
+  clearTimeout(whistleDirTimer);
+  whistleDirTimer = setTimeout(() => el.classList.add('hidden'), 2000);
+}
 socket.on('blast', ({ x, y, z, color }) => paintSplat(x, y, z, color));
 socket.on('emote', ({ emoji }) => flyEmote(emoji));
 socket.on('disconnect', () => toast('Disconnected. Reconnecting…'));

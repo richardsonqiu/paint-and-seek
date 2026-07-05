@@ -67,10 +67,12 @@ export const MAPS = {
     bounds: { minX: -21, maxX: 21, minZ: -8, maxZ: 8 },
     // Spawn points grouped by area. Each round the seeker and the hiders are
     // placed in DIFFERENT areas so a hider never starts next to the seeker.
+    // Spots are all in HALLS / open areas — never inside the narrow-doored
+    // bedrooms (players can walk in to hide, but nobody starts boxed in).
     spawnRooms: [
-      [[-12, 0], [-16, 0], [-8, -2], [-10, 3]],                 // west wing
+      [[-12, 0], [-8, -2], [-10, 3], [-6, 2]],                  // west hall & lounge
       [[0, -3], [0, 3], [-4, 0], [4, 0]],                       // living / dining
-      [[12, 0], [16, 0], [8, -2], [10, 3]],                     // east wing
+      [[12, 0], [8, -2], [10, 3], [6, -5]],                     // east hall & kitchen
     ],
   },
 

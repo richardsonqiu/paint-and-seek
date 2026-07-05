@@ -151,7 +151,7 @@ export class Room {
       for (const s of this.seekers()) {
         bodies.push({
           x: s.body.x, y: s.body.y || 0, z: s.body.z, ry: s.body.ry || 0,
-          pose: 'standing', paint: null,
+          pose: s.body.pose || 'standing', paint: null,
           id: s.id, name: s.name, found: false, seeker: true,
           mine: s.id === forId,
         });

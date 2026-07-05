@@ -200,6 +200,13 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .action-btn.blend.on { background: linear-gradient(180deg, #ffe08a, var(--warn)); animation: pulse .6s infinite alternate; }
 .action-btn.cling { right: 22px; bottom: calc(200px + var(--safe-b)); background: linear-gradient(180deg, #8fdcff, #4fc3f7); }
 .action-btn.cling.on { background: linear-gradient(180deg, #ffe08a, var(--warn)); }
+.action-btn.fire {
+  right: 108px; bottom: calc(132px + var(--safe-b));
+  width: 86px; height: 86px;
+  background: linear-gradient(180deg, #ff8f8f, var(--danger)); color: #fff;
+}
+.action-btn.peek { right: 108px; bottom: calc(232px + var(--safe-b)); background: linear-gradient(180deg, #d9c8ff, #a88bee); }
+.action-btn.peek.on { background: linear-gradient(180deg, #ffe08a, var(--warn)); }
 
 /* Fullscreen role/phase banner */
 .banner {
@@ -353,10 +360,33 @@ body.paint-mode .whistle-meter { display: none !important; }
   width: 150px; height: 150px; border-radius: 16px; background: rgba(58,44,26,.6);
   border: 3px solid #3a2c1a; }
 
-/* Emotes: top-right column, below the HUD. */
-.emote-bar { position: absolute; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 62px); z-index: 6; display: flex; flex-direction: column; gap: 6px; }
+/* Emotes: a single toggle top-right; the row pops out only while open. */
+.emote-toggle {
+  position: absolute; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 62px); z-index: 6;
+  font-size: 18px; background: var(--card); border: 2.5px solid #3a2c1a; border-radius: 12px;
+  width: 40px; height: 38px; cursor: pointer; box-shadow: 0 3px 0 rgba(58,44,26,.28);
+  opacity: .82;
+}
+.emote-toggle.open { background: #ffe9c7; border-color: var(--accent); opacity: 1; }
+.emote-bar {
+  position: absolute; right: 56px; top: calc(env(safe-area-inset-top, 0px) + 62px); z-index: 6;
+  display: flex; flex-direction: row; gap: 6px;
+}
 .emote { font-size: 20px; background: var(--card); border: 2.5px solid #3a2c1a; border-radius: 12px; width: 44px; height: 40px; cursor: pointer; box-shadow: 0 3px 0 rgba(58,44,26,.28); }
 .emote:active { transform: translateY(2px); box-shadow: none; }
+
+/* Directional whistle cue: an arrow that swings toward the sound source */
+.whistle-dir {
+  position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 7; pointer-events: none; text-align: center;
+  animation: whistleFade 2s ease-out forwards;
+}
+.whistle-dir span { font-size: 26px; display: block; }
+.whistle-arrow {
+  font-size: 34px; color: var(--warn); line-height: 1;
+  text-shadow: 0 0 4px rgba(58,44,26,.6);
+}
+@keyframes whistleFade { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
 
 .emote-float { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 8; }
 .emote-float .fly { position: absolute; font-size: 34px; animation: fly 1.6s ease-out forwards; }
