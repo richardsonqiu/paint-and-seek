@@ -1,4 +1,4 @@
-// Doodler Guys — game server.
+// Doodle Guys — game server.
 // Express serves the static client; Socket.io drives real-time rooms.
 
 import express from 'express';
@@ -120,21 +120,26 @@ function endRound(room, reason) {
     for (const s of room.seekers()) s.score += 100;
   }
 
-  // 10s: ~3s gawking at the revealed hiding spots, then the scoreboard.
-  room.deadline = Date.now() + 10000;
+  // No auto-advance: the reveal + scoreboard stay up until EVERY player has
+  // pressed Next (readiness is re-checked when someone leaves, too).
+  room.deadline = 0;
+  for (const p of room.players.values()) p.ready = false;
   broadcast(room);
+}
 
-  const isLastRound = room.round >= room.totalRounds;
-  room._timer = setTimeout(() => {
-    if (isLastRound) {
-      room.phase = 'lobby';
-      room.round = 0;
-      for (const p of room.players.values()) p.role = null;
-      broadcast(room);
-    } else {
-      startRound(room);
-    }
-  }, 10000);
+// Advance past the scoreboard once every connected player has pressed Next.
+function maybeAdvance(room) {
+  if (room.phase !== 'roundover') return;
+  const act = room.activePlayers();
+  if (act.length === 0 || !act.every((p) => p.ready)) return;
+  if (room.round >= room.totalRounds) {
+    room.phase = 'lobby';
+    room.round = 0;
+    for (const p of room.players.values()) { p.role = null; p.ready = false; }
+    broadcast(room);
+  } else {
+    startRound(room);
+  }
 }
 
 function maybeEndEarly(room) {
@@ -341,6 +346,16 @@ io.on('connection', (socket) => {
     scheduleBroadcast(r);
   });
 
+  // Player presses Next on the scoreboard; the round advances once all have.
+  socket.on('next', () => {
+    const r = room();
+    const p = me();
+    if (!r || !p || r.phase !== 'roundover') return;
+    p.ready = true;
+    broadcast(r);
+    maybeAdvance(r);
+  });
+
   socket.on('emote', ({ emoji }) => {
     const r = room();
     const p = me();
@@ -365,6 +380,7 @@ io.on('connection', (socket) => {
         io.to(r.code).emit('playerleft', { name: leaver.name, role: leaver.role });
       }
       maybeEndEarly(r);
+      maybeAdvance(r);   // the leaver may have been the last un-ready player
       broadcast(r);
     }
     roomCode = null;
@@ -376,5 +392,5 @@ function clamp(n, lo, hi) {
 }
 
 httpServer.listen(PORT, () => {
-  console.log(`Doodler Guys running at http://localhost:${PORT}`);
+  console.log(`Doodle Guys running at http://localhost:${PORT}`);
 });

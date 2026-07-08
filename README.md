@@ -1,4 +1,4 @@
-# 🦎 Doodler Guys
+# 🦎 Doodle Guys
 
 **Blend in. Don't get caught.**
 

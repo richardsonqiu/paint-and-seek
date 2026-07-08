@@ -4,19 +4,63 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#8ed14f" />
-  <title>Doodler Guys — paint &amp; seek</title>
+  <title>Doodle Guys — paint &amp; seek</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=16" />
+  <link rel="stylesheet" href="/style.css?v=17" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
   <!-- HOME -->
   <section id="screen-home" class="screen active">
+    <div class="sky-clouds" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <div class="hero">
-      <div class="hero-mascot">🦎</div>
-      <h1 class="logo">Doodler<br /><span>Guys!</span></h1>
+      <svg class="hero-chars" viewBox="0 0 360 170" role="img" aria-label="Three doodled mannequins">
+        <!-- ground paint splats -->
+        <ellipse cx="80" cy="158" rx="52" ry="9" fill="#ff3bd0" opacity=".35"/>
+        <ellipse cx="185" cy="163" rx="60" ry="10" fill="#3bd1ff" opacity=".35"/>
+        <ellipse cx="290" cy="157" rx="48" ry="9" fill="#7CFC00" opacity=".35"/>
+        <!-- left: waving, pink squiggle -->
+        <g transform="translate(38 38) rotate(-8 40 60)">
+          <rect x="58" y="-8" width="15" height="42" rx="7.5" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(28 65 13)"/>
+          <path d="M40 4 C62 4 72 22 72 52 C72 84 62 102 40 102 C18 102 8 84 8 52 C8 22 18 4 40 4 Z" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="2" y="52" width="14" height="34" rx="7" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(14 9 69)"/>
+          <rect x="24" y="100" width="13" height="22" rx="6.5" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="44" y="100" width="13" height="22" rx="6.5" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="29" y="30" width="7" height="17" rx="3.5" fill="#26262b"/>
+          <rect x="46" y="30" width="7" height="17" rx="3.5" fill="#26262b"/>
+          <path d="M22 66 q9 -11 18 0 t18 0" stroke="#ff3bd0" stroke-width="6" fill="none" stroke-linecap="round"/>
+          <path d="M26 82 q7 -8 14 0" stroke="#ff3bd0" stroke-width="5" fill="none" stroke-linecap="round"/>
+        </g>
+        <!-- middle: front and centre, blue + green doodles -->
+        <g transform="translate(138 22)">
+          <rect x="-4" y="58" width="15" height="38" rx="7.5" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(18 3 77)"/>
+          <rect x="79" y="58" width="15" height="38" rx="7.5" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(-18 87 77)"/>
+          <path d="M45 2 C71 2 83 23 83 57 C83 94 71 116 45 116 C19 116 7 94 7 57 C7 23 19 2 45 2 Z" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="26" y="114" width="14" height="26" rx="7" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="50" y="114" width="14" height="26" rx="7" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="33" y="34" width="8" height="19" rx="4" fill="#26262b"/>
+          <rect x="51" y="34" width="8" height="19" rx="4" fill="#26262b"/>
+          <path d="M22 72 q12 -14 23 0 t23 0" stroke="#3bd1ff" stroke-width="7" fill="none" stroke-linecap="round"/>
+          <path d="M28 92 l8 -10 l8 10 l8 -10 l8 10" stroke="#7CFC00" stroke-width="5.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="66" cy="20" r="5" fill="#ffd23b"/>
+        </g>
+        <!-- right: tipping over, orange scribble -->
+        <g transform="translate(248 44) rotate(10 40 55)">
+          <path d="M38 4 C59 4 69 21 69 49 C69 79 59 96 38 96 C17 96 7 79 7 49 C7 21 17 4 38 4 Z" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="-4" y="38" width="14" height="32" rx="7" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(30 3 54)"/>
+          <rect x="63" y="44" width="14" height="32" rx="7" fill="#fff" stroke="#20303e" stroke-width="4" transform="rotate(-38 70 60)"/>
+          <rect x="22" y="94" width="12" height="20" rx="6" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="41" y="94" width="12" height="20" rx="6" fill="#fff" stroke="#20303e" stroke-width="4"/>
+          <rect x="26" y="28" width="7" height="16" rx="3.5" fill="#26262b"/>
+          <rect x="42" y="28" width="7" height="16" rx="3.5" fill="#26262b"/>
+          <path d="M20 58 q8 10 18 2 q10 -8 18 2" stroke="#ff8a00" stroke-width="6" fill="none" stroke-linecap="round"/>
+          <circle cx="30" cy="76" r="4.5" fill="#ff3bd0"/>
+          <circle cx="46" cy="79" r="4.5" fill="#3bd1ff"/>
+        </g>
+      </svg>
+      <h1 class="logo-sg"><span class="l1">Doodle</span><span class="l2">GUYS</span></h1>
       <p class="tag">Blend in. Don't get caught.</p>
     </div>
     <div class="card">
@@ -145,9 +189,12 @@
       <div class="overlay-inner card">
         <h2 id="scoreTitle">Round over</h2>
         <ul id="scoreList" class="player-list"></ul>
+        <button id="nextBtn" class="btn primary big">▶ Next round</button>
+        <button id="peekMapBtn" class="btn ghost">🗺 Look at the hiding spots</button>
         <p id="nextHint" class="muted"></p>
       </div>
     </div>
+    <button id="showScoresBtn" class="btn primary show-scores hidden">📊 Scores</button>
 
     <!-- Quit confirmation -->
     <div id="quitOverlay" class="overlay hidden">
@@ -225,7 +272,7 @@
     <div class="rotate-inner">
       <div class="rotate-phone">📱</div>
       <h2>Turn your phone sideways!</h2>
-      <p>Doodler Guys plays in landscape — you need the wide view to spot the doodlers.</p>
+      <p>Doodle Guys plays in landscape — you need the wide view to spot the doodlers.</p>
     </div>
   </div>
 
@@ -239,6 +286,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=16"></script>
+  <script type="module" src="/game.js?v=17"></script>
 </body>
 </html>

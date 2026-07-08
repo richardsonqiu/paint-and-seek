@@ -1,4 +1,4 @@
-// Doodler Guys — 3D client (Three.js).
+// Doodle Guys — 3D client (Three.js).
 // A camouflage hide-and-seek party game à la Meccha Chameleon: hiders are
 // little chameleons that paint/blend themselves into the scenery; the seeker
 // hunts them down with a paint gun. Home/lobby are plain DOM; the game is a
@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=16';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=17';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -174,7 +174,7 @@ $('startBtn').onclick = () => socket.emit('start');
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
   try {
-    if (navigator.share) await navigator.share({ title: 'Doodler Guys', text: `Join my game! Code: ${snap.code}`, url });
+    if (navigator.share) await navigator.share({ title: 'Doodle Guys', text: `Join my game! Code: ${snap.code}`, url });
     else { await navigator.clipboard.writeText(url); toast('Link copied!'); }
   } catch (_) {}
 };
@@ -1630,6 +1630,19 @@ function updateCamera() {
     camera.lookAt(px + vx * 8, pivotY + vy * 8, pz + vz * 8);
   };
 
+  // Round-end reveal: zoom right out and slowly orbit the whole map so
+  // everyone can see where the hiders were tucked away (ceilings are
+  // stripped from the maps, so the elevated camera sees into every room).
+  if (snap && snap.phase === 'roundover') {
+    const ms = (snap.mapSize || { x: 30, z: 30 });
+    const R = Math.max(ms.x, ms.z);
+    const ang = performance.now() / 1000 * 0.1;
+    camera.up.set(0, 1, 0);
+    camera.position.set(Math.sin(ang) * R * 0.42, R * 0.6, Math.cos(ang) * R * 0.42);
+    camera.lookAt(0, 0, 0);
+    return;
+  }
+
   if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
   else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) overShoulder(seekerPos);
   else {
@@ -1698,7 +1711,10 @@ function tick(dt, render) {
   const t = clock.elapsedTime;
   updateRemoteAnims(dt, t);
   updateProjectiles(dt);
-  for (const [, m] of beacons) { m.rotation.y += dt * 2; m.material.opacity = 0.4 + 0.25 * Math.sin(t * 5); }
+  for (const [, g] of beacons) {          // [pillar, label] group per hider
+    const pillar = g.children[0];
+    if (pillar && pillar.material) { pillar.rotation.y += dt * 2; pillar.material.opacity = 0.4 + 0.25 * Math.sin(t * 5); }
+  }
   updateActionButtons();
   updateCamera();
   renderer.render(scene, camera);
@@ -2293,10 +2309,12 @@ function renderGame() {
       else showBanner('🙈', 'HOLD STILL!', 'The seeker is out — stay painted, whistle wisely!', 'hider');
       if (role === 'hider') myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
     } else if (phase === 'roundover') {
-      // The signature reveal: everyone sees where the survivors were hiding.
+      // The signature reveal: the camera pulls right out and orbits the map
+      // while pillars + names mark where everyone was hiding.
       showBanner('🎉', 'REVEALED!', 'Look where everyone was hiding…', '', 2600);
-      revealUntil = Date.now() + 3200;
-      setTimeout(() => { if (snap && snap.phase === 'roundover') renderGame(); }, 3300);
+      mapPeek = false;
+      revealUntil = Date.now() + 5000;
+      setTimeout(() => { if (snap && snap.phase === 'roundover') renderGame(); }, 5100);
     }
   }
 
@@ -2309,8 +2327,9 @@ function renderGame() {
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
 
-  // Reveal beacons: at round end, a golden pillar marks every survivor's spot.
-  syncBeacons(phase === 'roundover' ? (snap.bodies || []).filter((b) => !b.found && !b.seeker) : []);
+  // Reveal beacons: at round end, a labelled pillar marks EVERY hider's spot
+  // (gold = survived, red = caught) for the zoomed-out fly-over.
+  syncBeacons(phase === 'roundover' ? (snap.bodies || []).filter((b) => !b.seeker) : []);
 
   // Controls visibility
   const canMove = hiderControls();           // hider, prep or hunt, not caught
@@ -2347,31 +2366,72 @@ function renderGame() {
     $('waitText').textContent = 'Memorise the rooms. The hunt is coming.';
   } else { wait.classList.add('hidden'); }
 
-  // Hold the scoreboard back for a few seconds so everyone can gawk at the
-  // revealed hiding spots first.
-  const showScores = phase === 'roundover' && Date.now() >= revealUntil;
+  // Hold the scoreboard back while the fly-over plays, and let players tuck
+  // it away ("view map") to keep studying the hiding spots before readying up.
+  const showScores = phase === 'roundover' && Date.now() >= revealUntil && !mapPeek;
   $('scoreOverlay').classList.toggle('hidden', !showScores);
+  $('showScoresBtn').classList.toggle('hidden', !(phase === 'roundover' && mapPeek));
   if (showScores) renderScores();
+  // The big timer means nothing while waiting for everyone to press Next.
+  $('timer').classList.toggle('hidden', phase === 'roundover');
 }
 let revealUntil = 0;
+let mapPeek = false;
 
-// Golden pillars over surviving hiders during the round-end reveal.
+// Round-end reveal markers: a pillar + floating name over EVERY hider so the
+// zoomed-out camera shows exactly who was hiding where. Gold = survived the
+// round, red = caught. depthTest off so they read through walls/furniture.
 const beacons = new Map();
+function makeNameLabel(name, survived) {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 80;
+  const cx = cv.getContext('2d');
+  const text = (name || '').slice(0, 12);
+  cx.font = '800 34px "Baloo 2", sans-serif';
+  const w = Math.min(248, cx.measureText(text).width + 36);
+  cx.fillStyle = survived ? 'rgba(255,207,63,.95)' : 'rgba(50,54,63,.88)';
+  cx.beginPath(); cx.roundRect(128 - w / 2, 6, w, 52, 26); cx.fill();
+  cx.lineWidth = 5; cx.strokeStyle = 'rgba(58,44,26,.85)'; cx.stroke();
+  cx.fillStyle = survived ? '#3a2a00' : '#ffd7de';
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText((survived ? '' : '✗ ') + text, 128, 33);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(cv), transparent: true, depthTest: false,
+  }));
+  return spr;
+}
 function syncBeacons(bodies) {
   const seen = new Set();
+  // Label size scales with the map so names stay legible from the sky camera.
+  const R = (snap && snap.mapSize) ? Math.max(snap.mapSize.x, snap.mapSize.z) : 30;
+  const lw = Math.max(1.6, R * 0.13);
   for (const b of bodies) {
     seen.add(b.id);
     if (!beacons.has(b.id)) {
-      const m = new THREE.Mesh(
+      const survived = !b.found;
+      const grp = new THREE.Group();
+      const pillar = new THREE.Mesh(
         new THREE.CylinderGeometry(0.08, 0.02, 3.2, 10, 1, true),
-        new THREE.MeshBasicMaterial({ color: 0xffcf3f, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
-      m.position.set(b.x, (b.y || 0) + 1.6, b.z);
-      scene.add(m);
-      beacons.set(b.id, m);
+        new THREE.MeshBasicMaterial({
+          color: survived ? 0xffcf3f : 0xff5252, transparent: true, opacity: 0.55,
+          blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+        }));
+      pillar.position.y = 1.6;
+      const label = makeNameLabel(b.name, survived);
+      label.scale.set(lw, lw * 0.3125, 1);   // canvas is 256×80
+      label.position.y = 3.4;
+      grp.add(pillar, label);
+      grp.position.set(b.x, b.y || 0, b.z);
+      grp.renderOrder = 999;
+      scene.add(grp);
+      beacons.set(b.id, grp);
     }
   }
-  for (const [id, m] of [...beacons]) {
-    if (!seen.has(id)) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); beacons.delete(id); }
+  for (const [id, g] of [...beacons]) {
+    if (!seen.has(id)) {
+      scene.remove(g);
+      g.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
+      beacons.delete(id);
+    }
   }
 }
 
@@ -2405,15 +2465,28 @@ function renderScores() {
   $('scoreList').innerHTML = sorted.map((p, i) => `
     <li><span class="pemoji">${i === 0 ? '👑' : p.avatar}</span>
     <span class="pname">${escapeHtml(p.name)}</span>
+    ${p.ready ? '<span class="tagbadge ready">✔ READY</span>' : ''}
     <span class="tagbadge ${p.role || ''}">${(p.role || '').toUpperCase()}</span>
     <span class="pscore">${p.score}</span></li>`).join('');
-  $('nextHint').textContent = isFinal ? 'Returning to lobby…' : 'Next round starting soon…';
+  // The round only advances once EVERYONE presses Next.
+  const meP = snap.players.find((p) => p.id === myId);
+  const readyCount = snap.players.filter((p) => p.ready).length;
+  const btn = $('nextBtn');
+  btn.textContent = meP && meP.ready
+    ? `⏳ Waiting for others… (${readyCount}/${snap.players.length})`
+    : (isFinal ? '🏁 Back to lobby' : '▶ Next round');
+  btn.disabled = !!(meP && meP.ready);
+  $('nextHint').textContent = meP && meP.ready
+    ? '' : `Everyone must press to continue · ${readyCount}/${snap.players.length} ready`;
   if (_scoredRound !== snap.round) {
     _scoredRound = snap.round;
     SFX.win();
     confetti(isFinal ? 120 : 50);
   }
 }
+$('nextBtn').addEventListener('click', () => { SFX.click(); socket.emit('next'); });
+$('peekMapBtn').addEventListener('click', () => { SFX.click(); mapPeek = true; renderGame(); });
+$('showScoresBtn').addEventListener('click', () => { SFX.click(); mapPeek = false; renderGame(); });
 
 // ---- Timer --------------------------------------------------------------
 let lastTickSec = -1;

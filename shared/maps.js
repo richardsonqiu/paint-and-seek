@@ -1,4 +1,4 @@
-// Shared 3D map definition for Doodler Guys.
+// Shared 3D map definition for Doodle Guys.
 //
 // There is ONE big map ("The Grounds") built from the Kenney low-poly kits in
 // /public/models. It is a walled compound divided into a 3x3 grid of themed
