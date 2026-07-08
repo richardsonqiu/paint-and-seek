@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=15';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=16';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -189,6 +189,7 @@ function buildMapSelect() {
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
+$('seekersInput').addEventListener('change', () => socket.emit('settings', { seekers: +$('seekersInput').value }));
 $('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value === 'on' }));
 
 function renderLobby() {
@@ -208,6 +209,7 @@ function renderLobby() {
     $('mapSelect').value = snap.settings.map; $('modeSelect').value = snap.settings.mode;
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
+    $('seekersInput').value = snap.settings.seekers || 1;
     $('whistleSelect').value = snap.settings.whistle === false ? 'off' : 'on';
   }
 }
@@ -388,7 +390,7 @@ const MOVE_SPEED = 2.8;                    // seeker: a careful stalk
 // unspottable under-furniture gaps. The seeker is bigger, but not a giant —
 // it has to fit through the same doorways.
 const HIDER_SCALE = 0.18;
-const SEEKER_SCALE = 0.7;
+const SEEKER_SCALE = 0.35;
 const SEEKER_CAM_DIST = 2.4;               // third-person framing for the hunter
 const HIDER_MOVE_SPEED = 2.4;
 
@@ -1271,7 +1273,7 @@ function clearanceAbove(x, y, z) {
 // 0.6 blocks the sofa/bed crawl-space (solid skirts → unspottable) but still
 // lets you duck between open table legs, where a seeker CAN spot you.
 const MIN_HEADROOM_HIDER = 0.6;
-const MIN_HEADROOM_SEEKER = 1.15; // the (taller) seeker can't duck under tables
+const MIN_HEADROOM_SEEKER = 0.75; // taller than a hider, so still no ducking under tables
 
 // Allow a move if the destination has enough headroom — OR at least as much
 // as where you already stand. Blocking on absolute clearance alone froze
@@ -1479,7 +1481,7 @@ function applyMovement(dt) {
     // Slim on purpose: the flat's bedroom doorways are narrow, and a fat
     // radius trapped seekers inside. Slight visual clipping at door edges is
     // far better than being stuck.
-    const SRAD = 0.22, RAYY = (p.y || 0) + 0.35;
+    const SRAD = 0.15, RAYY = (p.y || 0) + 0.25;
     // Third person: move camera-relative and turn the body to face travel.
     const mv = moveVector();
     // FPS: the body always faces where the camera looks (the gun IS the aim).
@@ -1488,7 +1490,7 @@ function applyMovement(dt) {
       const spd = seekerPeek ? MOVE_SPEED * 0.45 : MOVE_SPEED;  // creep while peeking
       let nx = clamp(p.x + mv.x * mv.mag * spd * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * mv.mag * spd * dt, b.minZ, b.maxZ);
-      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 1.0);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 0.5);
       const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
       if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER)) {
         p.x = nx; p.z = nz; // stay on the building floor, out from under furniture
@@ -1606,8 +1608,8 @@ function updateCamera() {
     cam.pitch = clamp(cam.pitch, -0.55, 0.85);
     const f = forwardXZ(cam.yaw);
     const rx = -f.z, rz = f.x;                       // camera-right
-    const side = 0.5, dist = 1.9;
-    const pivotY = (p.y || 0) + (seekerPeek ? 0.42 : 1.3);
+    const side = 0.25, dist = 0.95;                  // framing scaled to the half-size hunter
+    const pivotY = (p.y || 0) + (seekerPeek ? 0.21 : 0.65);
     const px = p.x + rx * side, pz = p.z + rz * side;
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     // View direction (pitch+ looks down), camera sits behind the pivot.
@@ -1877,15 +1879,16 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (e.pointerId !== lookId) return;
   if (painting) { paintRaycast(e.clientX, e.clientY); return; }
-  // "Grab the world": drag left → look left (camera pans WITH the finger).
+  // Drag right-to-left → look LEFT, drag top-to-bottom → look UP (the camera
+  // turns toward the finger's direction of travel).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
   // Third-person panning is for standing still — while moving, the chase
   // camera owns the yaw. The FPS seeker looks freely at all times (turning
   // while running is the whole point of a shooter).
   const fpsSeeker = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
-  if (fpsSeeker || !isMovingInput()) cam.yaw += dx * LOOK_SENS;
-  cam.pitch += dy * LOOK_SENS;
+  if (fpsSeeker || !isMovingInput()) cam.yaw -= dx * LOOK_SENS;
+  cam.pitch -= dy * LOOK_SENS;
 });
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);

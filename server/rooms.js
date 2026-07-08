@@ -13,11 +13,12 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused cha
 export { POSES };
 
 export const DEFAULT_SETTINGS = {
-  prepTime: 75,     // ~90s hide phase in the original; deliberately tight
-  huntTime: 180,
+  prepTime: 30,     // hide phase
+  huntTime: 45,     // seek time PER HIDER — 3 hiders = 135s of hunting
   map: DEFAULT_MAP_ID,
   mode: 'classic', // 'classic' | 'infection'
-  rounds: 3,
+  rounds: 3,       // bumped up at start so every player seeks at least once
+  seekers: 1,      // seekers per round; everyone else hides
   whistle: true,   // hiders auto-whistle every 45s (manual whistle resets it)
 };
 
@@ -45,6 +46,8 @@ export class Room {
     this.round = 0;
     this.deadline = 0;
     this._timer = null;
+    this.totalRounds = this.settings.rounds;
+    this.seekerQueue = [];  // ids yet to take a seeker turn this cycle
   }
 
   addPlayer(id, name, avatar) {
@@ -87,15 +90,33 @@ export class Room {
     return this.seekers().filter((p) => !p.out);
   }
 
+  // Seekers per round: the host's setting, but always leave at least 1 hider
+  // so a solo host can test (1 player -> 0 seekers, 1 hider).
+  seekerCount() {
+    const n = this.activePlayers().length;
+    return Math.min(Math.max(1, this.settings.seekers || 1), Math.max(0, n - 1));
+  }
+
+  // Fair rotation: everyone takes a seeker turn before anyone repeats. A
+  // shuffled queue of ids persists across rounds; each round pops the next N
+  // and the queue only refills (reshuffled) once it's empty — so 4 players
+  // with 1 seeker is a clean 4-round cycle, no doubles.
+  drawSeekers(players, count) {
+    const ids = new Set(players.map((p) => p.id));
+    this.seekerQueue = this.seekerQueue.filter((id) => ids.has(id)); // drop leavers
+    const picked = new Set();
+    while (picked.size < count) {
+      if (this.seekerQueue.length === 0) {
+        this.seekerQueue = shuffle(players.map((p) => p.id).filter((id) => !picked.has(id)));
+      }
+      picked.add(this.seekerQueue.shift());
+    }
+    return picked;
+  }
+
   assignRoles() {
     const players = this.activePlayers();
-    const shuffled = shuffle(players);
-    // ~1 seeker per 3 players, but always leave at least 1 hider so a solo
-    // host can test (1 player -> 0 seekers, 1 hider).
-    const seekerCount = Math.min(
-      Math.max(1, Math.floor(players.length / 3)),
-      Math.max(0, players.length - 1)
-    );
+    const seekerIds = this.drawSeekers(players, this.seekerCount());
     // Put seekers in one room and hiders in the other rooms, at random spots,
     // so a hider never spawns right next to a seeker.
     const rooms = roomSpawns(this.map);
@@ -105,8 +126,8 @@ export class Room {
     const seekerSpawns = shuffle(rooms[seekerRoom]);
     const hiderSpawns = shuffle(hiderRoomIdx.flatMap((i) => rooms[i]));
     let si = 0, hi = 0;
-    shuffled.forEach((p, i) => {
-      p.role = i < seekerCount ? 'seeker' : 'hider';
+    players.forEach((p) => {
+      p.role = seekerIds.has(p.id) ? 'seeker' : 'hider';
       p.found = false;
       p.hp = SEEKER_HP;            // seekers lose 1 per missed shot
       p.out = false;               // seeker eliminated by too many misses
@@ -173,7 +194,7 @@ export class Room {
       hostId: this.hostId,
       phase: this.phase,
       round: this.round,
-      totalRounds: this.settings.rounds,
+      totalRounds: this.phase === 'lobby' ? this.settings.rounds : this.totalRounds,
       deadline: this.deadline,
       now: Date.now(),
       settings: this.settings,

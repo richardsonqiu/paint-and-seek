@@ -73,7 +73,10 @@ function enterPrep(room) {
 function enterHunt(room) {
   clearTimer(room);
   room.phase = 'hunt';
-  room.deadline = Date.now() + room.settings.huntTime * 1000;
+  // Seek time scales with the group: huntTime is PER HIDER (45s default),
+  // so a seeker hunting 3 people gets 135s.
+  room.huntMs = room.settings.huntTime * 1000 * Math.max(1, room.hiders().length);
+  room.deadline = Date.now() + room.huntMs;
   // Arm the auto-whistle: every hider betrays their position every 45s unless
   // they whistle manually first (which resets the countdown).
   const now = Date.now();
@@ -83,7 +86,7 @@ function enterHunt(room) {
   }
   startPump(room);
   broadcast(room);
-  room._timer = setTimeout(() => endRound(room, 'time'), room.settings.huntTime * 1000);
+  room._timer = setTimeout(() => endRound(room, 'time'), room.huntMs);
 }
 
 function tickWhistles(room) {
@@ -121,7 +124,7 @@ function endRound(room, reason) {
   room.deadline = Date.now() + 10000;
   broadcast(room);
 
-  const isLastRound = room.round >= room.settings.rounds;
+  const isLastRound = room.round >= room.totalRounds;
   room._timer = setTimeout(() => {
     if (isLastRound) {
       room.phase = 'lobby';
@@ -183,9 +186,10 @@ io.on('connection', (socket) => {
     const r = room();
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
     const s = r.settings;
-    if (typeof patch.prepTime === 'number') s.prepTime = clamp(patch.prepTime, 20, 120);
-    if (typeof patch.huntTime === 'number') s.huntTime = clamp(patch.huntTime, 30, 240);
-    if (typeof patch.rounds === 'number') s.rounds = clamp(patch.rounds, 1, 10);
+    if (typeof patch.prepTime === 'number') s.prepTime = clamp(patch.prepTime, 10, 120);
+    if (typeof patch.huntTime === 'number') s.huntTime = clamp(patch.huntTime, 10, 120); // per hider
+    if (typeof patch.rounds === 'number') s.rounds = clamp(patch.rounds, 1, 20);
+    if (typeof patch.seekers === 'number') s.seekers = clamp(Math.round(patch.seekers), 1, 11);
     if (patch.map) s.map = patch.map;
     if (patch.mode) s.mode = patch.mode;
     if (typeof patch.whistle === 'boolean') s.whistle = patch.whistle;
@@ -195,7 +199,14 @@ io.on('connection', (socket) => {
   socket.on('start', () => {
     const r = room();
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
-    if (r.activePlayers().length < 1) return; // min 1 for easier testing
+    const n = r.activePlayers().length;
+    if (n < 1) return; // min 1 for easier testing
+    // Everyone gets a seeker turn: with N players and K seekers per round a
+    // full cycle is ceil(N/K) rounds, so the game runs at least that long
+    // (4 players, 1 seeker -> minimum 4 rounds).
+    const cycle = Math.ceil(n / Math.max(1, r.seekerCount()));
+    r.totalRounds = Math.max(r.settings.rounds, cycle);
+    r.seekerQueue = []; // fresh rotation each game
     startRound(r);
   });
 
@@ -236,12 +247,12 @@ io.on('connection', (socket) => {
     if (hit && !hit.found) {
       hit.found = true;
       // Seeker reward + time bonus for tagging earlier in the hunt.
+      const huntMs = r.huntMs || r.settings.huntTime * 1000;
       const msLeft = Math.max(0, r.deadline - Date.now());
-      const timeBonus = Math.round((msLeft / (r.settings.huntTime * 1000)) * 40);
+      const timeBonus = Math.round((msLeft / huntMs) * 40);
       p.score += 60 + timeBonus;
       // Caught hider gets partial survival credit.
-      const elapsed = r.settings.huntTime * 1000 - msLeft;
-      hit.score += Math.round((elapsed / (r.settings.huntTime * 1000)) * 50);
+      hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
       // Infection mode: a caught hider switches sides and joins the hunt.
       if (r.settings.mode === 'infection') {
         hit.role = 'seeker';
@@ -279,10 +290,10 @@ io.on('connection', (socket) => {
     }
     if (hit) {
       hit.found = true;
+      const huntMs = r.huntMs || r.settings.huntTime * 1000;
       const msLeft = Math.max(0, r.deadline - now);
-      p.score += 60 + Math.round((msLeft / (r.settings.huntTime * 1000)) * 40);
-      const elapsed = r.settings.huntTime * 1000 - msLeft;
-      hit.score += Math.round((elapsed / (r.settings.huntTime * 1000)) * 50);
+      p.score += 60 + Math.round((msLeft / huntMs) * 40);
+      hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
       if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; hit.hp = SEEKER_HP; }
       io.to(r.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
       broadcast(r);

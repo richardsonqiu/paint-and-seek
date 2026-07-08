@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=15" />
+  <link rel="stylesheet" href="/style.css?v=16" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -60,10 +60,12 @@
         </select>
       </label>
       <div class="settings-grid">
-        <label class="field"><span>Hide (s)</span><input id="prepInput" type="number" min="20" max="120" /></label>
-        <label class="field"><span>Seek (s)</span><input id="huntInput" type="number" min="30" max="240" /></label>
-        <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="10" /></label>
+        <label class="field"><span>Hide (s)</span><input id="prepInput" type="number" min="10" max="120" /></label>
+        <label class="field"><span>Seek (s/hider)</span><input id="huntInput" type="number" min="10" max="120" /></label>
+        <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="20" /></label>
+        <label class="field"><span>Seekers</span><input id="seekersInput" type="number" min="1" max="11" /></label>
       </div>
+      <p class="footnote">Seek time is per hider (45s × 3 hiders = 135s). Everyone not seeking hides. Rounds are bumped up so every player gets a seeker turn.</p>
       <label class="field"><span>Whistle</span>
         <select id="whistleSelect">
           <option value="on">On — hiders auto-whistle every 45s</option>
@@ -237,6 +239,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=15"></script>
+  <script type="module" src="/game.js?v=16"></script>
 </body>
 </html>
