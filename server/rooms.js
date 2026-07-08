@@ -134,20 +134,31 @@ export class Room {
     return Math.min(Math.max(1, this.settings.seekers || 1), h, Math.max(0, n - 1));
   }
 
-  // Fair rotation: everyone takes a seeker turn before anyone repeats. A
-  // shuffled queue of ids persists across rounds; each round pops the next N
-  // and the queue only refills (reshuffled) once it's empty — so 4 players
-  // with 1 seeker is a clean 4-round cycle, no doubles.
+  // Round-robin rotation with two guarantees:
+  //  1. Everyone takes a seeker turn before anyone repeats (a queue of ids
+  //     persists across rounds; each round pops the next N and it only
+  //     refills once empty — 4 players with 1 seeker is a clean 4-round
+  //     cycle, no doubles).
+  //  2. Nobody is seeker twice IN A ROW: when a new cycle starts, last
+  //     round's seekers are placed at the BACK of the queue, so a repeat can
+  //     only happen when it's mathematically unavoidable (e.g. 1 human, or
+  //     seekers-per-round > other players).
   drawSeekers(players, count) {
     const ids = new Set(players.map((p) => p.id));
     this.seekerQueue = this.seekerQueue.filter((id) => ids.has(id)); // drop leavers
+    const last = this.lastSeekerIds || new Set();
     const picked = new Set();
     while (picked.size < count) {
       if (this.seekerQueue.length === 0) {
-        this.seekerQueue = shuffle(players.map((p) => p.id).filter((id) => !picked.has(id)));
+        const remaining = players.map((p) => p.id).filter((id) => !picked.has(id));
+        if (!remaining.length) break;   // safety: fewer players than seats
+        const fresh = shuffle(remaining.filter((id) => !last.has(id)));
+        const justSeeked = shuffle(remaining.filter((id) => last.has(id)));
+        this.seekerQueue = [...fresh, ...justSeeked];
       }
       picked.add(this.seekerQueue.shift());
     }
+    this.lastSeekerIds = new Set(picked);
     return picked;
   }
 

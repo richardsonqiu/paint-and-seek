@@ -253,7 +253,8 @@ io.on('connection', (socket) => {
     // (4 players, 1 seeker -> minimum 4 rounds). Bots never seek.
     const cycle = Math.ceil(r.humans().length / Math.max(1, r.seekerCount()));
     r.totalRounds = Math.max(r.settings.rounds, cycle);
-    r.seekerQueue = []; // fresh rotation each game
+    r.seekerQueue = [];          // fresh rotation each game
+    r.lastSeekerIds = new Set(); // no carry-over "no repeat" debt from last game
     startRound(r);
   });
 
