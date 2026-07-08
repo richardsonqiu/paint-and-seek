@@ -10,6 +10,9 @@ function shuffle(a) { return [...a].sort(() => Math.random() - 0.5); }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
+// Body shapes the client can render (see game.js SHAPE definitions).
+const BODY_SHAPES = ['egg', 'buddy', 'bean', 'bobo'];
+
 export { POSES };
 
 export const DEFAULT_SETTINGS = {
@@ -50,12 +53,13 @@ export class Room {
     this.seekerQueue = [];  // ids yet to take a seeker turn this cycle
   }
 
-  addPlayer(id, name, avatar) {
+  addPlayer(id, name, avatar, shape) {
     if (this.players.size === 0) this.hostId = id;
     this.players.set(id, {
       id,
       name: name || 'Doodler',
       avatar: avatar || '🙂',
+      shape: BODY_SHAPES.includes(shape) ? shape : 'egg',
       role: null,
       connected: true,
       score: 0,
@@ -163,6 +167,7 @@ export class Room {
           ...h.body,
           id: h.id,
           name: h.name,
+          shape: h.shape,
           found: h.found,
           mine: h.id === forId,
         });
@@ -173,7 +178,7 @@ export class Room {
         bodies.push({
           x: s.body.x, y: s.body.y || 0, z: s.body.z, ry: s.body.ry || 0,
           pose: s.body.pose || 'standing', paint: null,
-          id: s.id, name: s.name, found: false, seeker: true,
+          id: s.id, name: s.name, shape: s.shape, found: false, seeker: true,
           mine: s.id === forId,
         });
       }

@@ -164,17 +164,17 @@ io.on('connection', (socket) => {
     return r ? r.players.get(socket.id) : null;
   };
 
-  socket.on('create', ({ name, avatar }, cb) => {
+  socket.on('create', ({ name, avatar, shape }, cb) => {
     cleanup();                       // leave any room we were already in
     const r = store.create();
     roomCode = r.code;
     socket.join(r.code);
-    r.addPlayer(socket.id, name, avatar);
+    r.addPlayer(socket.id, name, avatar, shape);
     cb && cb({ ok: true, code: r.code });
     broadcast(r);
   });
 
-  socket.on('join', ({ code, name, avatar }, cb) => {
+  socket.on('join', ({ code, name, avatar, shape }, cb) => {
     const r = store.get(code);
     if (!r) return cb && cb({ ok: false, error: 'Room not found' });
     if (roomCode && roomCode !== r.code) cleanup(); // leave any previous room
@@ -182,7 +182,7 @@ io.on('connection', (socket) => {
     if (r.players.size >= 12) return cb && cb({ ok: false, error: 'Room is full' });
     roomCode = r.code;
     socket.join(r.code);
-    r.addPlayer(socket.id, name, avatar);
+    r.addPlayer(socket.id, name, avatar, shape);
     cb && cb({ ok: true, code: r.code });
     broadcast(r);
   });

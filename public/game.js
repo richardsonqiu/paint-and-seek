@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=17';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=18';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -127,9 +127,34 @@ function buildAvatars() {
     wrap.appendChild(b);
   });
 }
+// Body-shape picker: little SVG silhouettes of each body. The choice rides
+// along with create/join and every other client renders you with it.
+const SHAPE_CHOICES = [
+  { id: 'egg', label: 'Egg', svg: '<svg viewBox="0 0 40 48"><path d="M20 4 C31 4 36 15 36 28 C36 40 29 45 20 45 C11 45 4 40 4 28 C4 15 9 4 20 4 Z" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="13" y="17" width="4" height="9" rx="2" fill="#26262b"/><rect x="23" y="17" width="4" height="9" rx="2" fill="#26262b"/></svg>' },
+  { id: 'buddy', label: 'Buddy', svg: '<svg viewBox="0 0 40 48"><circle cx="20" cy="14" r="10.5" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="8" y="20" width="24" height="25" rx="12" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="14" y="10" width="4" height="8" rx="2" fill="#26262b"/><rect x="22" y="10" width="4" height="8" rx="2" fill="#26262b"/></svg>' },
+  { id: 'bean', label: 'Bean', svg: '<svg viewBox="0 0 40 48"><circle cx="20" cy="10" r="8" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="12" y="15" width="16" height="30" rx="8" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="15.5" y="7" width="3.4" height="6.5" rx="1.7" fill="#26262b"/><rect x="21.5" y="7" width="3.4" height="6.5" rx="1.7" fill="#26262b"/></svg>' },
+  { id: 'bobo', label: 'Bobo', svg: '<svg viewBox="0 0 40 48"><ellipse cx="20" cy="27" rx="17" ry="16" fill="#fff" stroke="#20303e" stroke-width="3"/><rect x="13" y="19" width="4.5" height="10" rx="2.2" fill="#26262b"/><rect x="22.5" y="19" width="4.5" height="10" rx="2.2" fill="#26262b"/></svg>' },
+];
+let chosenShape = localStorage.getItem('dg-shape') || 'egg';
+if (!SHAPE_CHOICES.some((s) => s.id === chosenShape)) chosenShape = 'egg';
+let myShape = chosenShape;
+function buildShapes() {
+  const wrap = $('shapePicker'); wrap.innerHTML = '';
+  SHAPE_CHOICES.forEach((s) => {
+    const b = document.createElement('button');
+    b.innerHTML = `${s.svg}<small>${s.label}</small>`;
+    if (s.id === chosenShape) b.classList.add('sel');
+    b.onclick = () => {
+      chosenShape = s.id; myShape = s.id;
+      localStorage.setItem('dg-shape', s.id);
+      buildShapes(); SFX.click();
+    };
+    wrap.appendChild(b);
+  });
+}
 function myInfo() {
   const name = ($('nameInput').value || '').trim().slice(0, 12) || 'Chameleon';
-  return { name, avatar: chosenAvatar };
+  return { name, avatar: chosenAvatar, shape: chosenShape };
 }
 $('createBtn').onclick = () => socket.emit('create', myInfo(), (res) => {
   if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; SFX.banner(); }
@@ -393,6 +418,14 @@ const HIDER_SCALE = 0.18;
 const SEEKER_SCALE = 0.35;
 const SEEKER_CAM_DIST = 2.4;               // third-person framing for the hunter
 const HIDER_MOVE_SPEED = 2.4;
+
+// Per-map character scale: bigger maps get proportionally bigger characters
+// so they don't drown in the environment. The multiplier applies to BOTH
+// roles, so the hider:seeker ratio never changes.
+function charScale() {
+  const m = snap && MAPS[snap.mapId];
+  return (m && m.charScale) || 1;
+}
 
 function initThree() {
   if (threeReady) return;
@@ -673,35 +706,97 @@ function remapUV(geo, region) {
 // Base (unscaled) mannequin height ~1.9; the model faces +Z.
 const CHAR_LEN = 1.9;
 
-let charGeos = null;
-function buildCharGeos() {
-  if (charGeos) return charGeos;
-  const mk = (geo, region) => remapUV(geo, REGIONS[region]);
-  // Proportions matched to the figure set: an oversized round head sunk
-  // straight into a chunky torso (no neck at all), short tube arms and
-  // stubby little legs — roughly 1/3 head, 1/2 body, stub legs.
-  const head = new THREE.SphereGeometry(0.43, 32, 24);
-  head.scale(0.98, 1.03, 0.98);
-  charGeos = {
-    head:  mk(head, 'head'),
-    torso: mk(new THREE.CapsuleGeometry(0.40, 0.44, 12, 30), 'torso'),
-    armL:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armL'),
-    armR:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armR'),
-    legL:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legL'),
-    legR:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legR'),
-  };
-  return charGeos;
+// ---- Body shapes ---------------------------------------------------------
+// Every player picks a body. All shapes share the same rig (waist pivot,
+// shoulder pivots, hip-pivoted legs) so the pose set works everywhere, but
+// the silhouettes — and therefore every pose — read differently per shape.
+// dims drive the per-shape numbers: pivot heights, eye placement, and the
+// ground offsets the poses need (flat/ball/kneel).
+export const SHAPE_IDS = ['egg', 'buddy', 'bean', 'bobo'];
+const charGeoCache = {};
+function buildCharGeos(shape) {
+  if (charGeoCache[shape]) return charGeoCache[shape];
+  const mk = (geo, region) => remapUV(geo, Array.isArray(region) ? region : REGIONS[region]);
+  let G;
+  if (shape === 'buddy') {
+    // The classic two-sphere mannequin: oversized head sunk into a chunky
+    // torso, tube arms, stubby legs.
+    const head = new THREE.SphereGeometry(0.43, 32, 24);
+    head.scale(0.98, 1.03, 0.98);
+    G = {
+      head:  mk(head, 'head'),
+      body:  mk(new THREE.CapsuleGeometry(0.40, 0.44, 12, 30), 'torso'),
+      armL:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armL'),
+      armR:  mk(new THREE.CapsuleGeometry(0.125, 0.34, 8, 20), 'armR'),
+      legL:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legL'),
+      legR:  mk(new THREE.CapsuleGeometry(0.17, 0.14, 8, 20), 'legR'),
+      dims: { headY: 1.40, bodyY: 0.77, hipY: 0.48, armX: 0.46, armY: 1.02, armDrop: 0.24,
+              legX: 0.19, legDrop: 0.24, eyeDX: 0.14, eyeY: 1.44, eyeZ: 0.40, gunY: 1.0,
+              flatY: 0.38, ballY: 0.15, kneelY: -0.10 },
+    };
+  } else if (shape === 'bean') {
+    // Tall and slim: small head, long torso, longer limbs.
+    const head = new THREE.SphereGeometry(0.34, 32, 24);
+    head.scale(0.95, 1.05, 0.95);
+    G = {
+      head:  mk(head, 'head'),
+      body:  mk(new THREE.CapsuleGeometry(0.28, 0.78, 12, 30), 'torso'),
+      armL:  mk(new THREE.CapsuleGeometry(0.105, 0.42, 8, 20), 'armL'),
+      armR:  mk(new THREE.CapsuleGeometry(0.105, 0.42, 8, 20), 'armR'),
+      legL:  mk(new THREE.CapsuleGeometry(0.13, 0.34, 8, 20), 'legL'),
+      legR:  mk(new THREE.CapsuleGeometry(0.13, 0.34, 8, 20), 'legR'),
+      dims: { headY: 1.55, bodyY: 0.92, hipY: 0.55, armX: 0.34, armY: 1.20, armDrop: 0.28,
+              legX: 0.15, legDrop: 0.25, eyeDX: 0.12, eyeY: 1.58, eyeZ: 0.31, gunY: 1.15,
+              flatY: 0.27, ballY: 0.12, kneelY: -0.12 },
+    };
+  } else if (shape === 'bobo') {
+    // A chubby ball with a face: short, round, adorable, hard to spot behind
+    // anything round.
+    const body = new THREE.SphereGeometry(0.64, 32, 24);
+    body.scale(1.02, 0.9, 1.02);
+    G = {
+      body:  mk(body, [0, 0.5, 1, 1]),  // one big skin: whole top half of the atlas
+      armL:  mk(new THREE.CapsuleGeometry(0.11, 0.18, 8, 20), 'armL'),
+      armR:  mk(new THREE.CapsuleGeometry(0.11, 0.18, 8, 20), 'armR'),
+      legL:  mk(new THREE.CapsuleGeometry(0.14, 0.10, 8, 20), 'legL'),
+      legR:  mk(new THREE.CapsuleGeometry(0.14, 0.10, 8, 20), 'legR'),
+      dims: { bodyY: 0.72, hipY: 0.38, armX: 0.60, armY: 0.95, armDrop: 0.16,
+              legX: 0.22, legDrop: 0.19, eyeDX: 0.17, eyeY: 0.95, eyeZ: 0.60, gunY: 0.85,
+              flatY: 0.60, ballY: 0.10, kneelY: -0.05 },
+    };
+  } else {
+    // 'egg' (default): one smooth egg from crown to hips — the menu mascot.
+    const body = new THREE.SphereGeometry(0.52, 32, 24);
+    body.scale(1.0, 1.72, 0.94);
+    G = {
+      body:  mk(body, [0, 0.5, 1, 1]),  // one big skin: whole top half of the atlas
+      armL:  mk(new THREE.CapsuleGeometry(0.115, 0.30, 8, 20), 'armL'),
+      armR:  mk(new THREE.CapsuleGeometry(0.115, 0.30, 8, 20), 'armR'),
+      legL:  mk(new THREE.CapsuleGeometry(0.155, 0.16, 8, 20), 'legL'),
+      legR:  mk(new THREE.CapsuleGeometry(0.155, 0.16, 8, 20), 'legR'),
+      dims: { bodyY: 0.98, hipY: 0.42, armX: 0.50, armY: 1.05, armDrop: 0.22,
+              legX: 0.20, legDrop: 0.185, eyeDX: 0.155, eyeY: 1.30, eyeZ: 0.43, gunY: 1.0,
+              flatY: 0.46, ballY: 0.18, kneelY: -0.08 },
+    };
+  }
+  charGeoCache[shape] = G;
+  return G;
 }
 
-// Joint pivot heights (local, before HIDER_SCALE).
-const HIP_Y = 0.48;      // waist / hip pivot
-const SHO_Y = 1.02;      // shoulder pivot
+// Little dark eyes (like the menu mascots). Not painted, no shadows.
+let _eyeGeo = null;
+const EYE_MAT = new THREE.MeshStandardMaterial({ color: 0x26262b, roughness: 0.35 });
+function eyeGeo() {
+  if (!_eyeGeo) _eyeGeo = new THREE.CapsuleGeometry(0.042, 0.09, 6, 12);
+  return _eyeGeo;
+}
 
 // Build the mannequin as a small rig: a waist-pivoted upper body (with
 // shoulder pivots for the arms) and hip-pivoted legs, so poses can bend at
 // the joints. Each player gets its own canvas/texture/material (per-player
-// paint) but shares the cached geometry.
-function buildCharacter(paintUrl) {
+// paint) but shares the cached per-shape geometry.
+function buildCharacter(paintUrl, shape = 'egg') {
+  if (!SHAPE_IDS.includes(shape)) shape = 'egg';
   const grp = new THREE.Group();
   grp.rotation.order = 'YXZ'; // yaw first, then pose pitch
   const canvas = document.createElement('canvas');
@@ -712,7 +807,8 @@ function buildCharacter(paintUrl) {
   texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.0 });
 
-  const G = buildCharGeos();
+  const G = buildCharGeos(shape);
+  const D = G.dims;
   const paintMeshes = [];
   const mesh = (geo, x, y, z = 0) => {
     const m = new THREE.Mesh(geo, material);
@@ -722,28 +818,36 @@ function buildCharacter(paintUrl) {
   };
   const pivot = (x, y, z = 0) => { const p = new THREE.Group(); p.position.set(x, y, z); return p; };
 
-  // Upper body rotates at the waist. The head sits straight on the torso —
-  // overlapping spheres blend into one smooth silhouette.
-  const upper = pivot(0, HIP_Y, 0);
-  upper.add(mesh(G.torso, 0, 0.77 - HIP_Y));
-  upper.add(mesh(G.head, 0, 1.40 - HIP_Y));
-  const armL = pivot(-0.46, SHO_Y - HIP_Y, 0);
-  armL.add(mesh(G.armL, 0, -0.24));
-  const armR = pivot(0.46, SHO_Y - HIP_Y, 0);
-  armR.add(mesh(G.armR, 0, -0.24));
+  // Upper body rotates at the waist.
+  const upper = pivot(0, D.hipY, 0);
+  upper.add(mesh(G.body, 0, D.bodyY - D.hipY));
+  if (G.head) upper.add(mesh(G.head, 0, D.headY - D.hipY));
+  const armL = pivot(-D.armX, D.armY - D.hipY, 0);
+  armL.add(mesh(G.armL, 0, -D.armDrop));
+  const armR = pivot(D.armX, D.armY - D.hipY, 0);
+  armR.add(mesh(G.armR, 0, -D.armDrop));
   upper.add(armL, armR);
 
+  // Eyes ride the upper body (they pitch with poses). Not paintable.
+  for (const dx of [-D.eyeDX, D.eyeDX]) {
+    const eye = new THREE.Mesh(eyeGeo(), EYE_MAT);
+    eye.position.set(dx, D.eyeY - D.hipY, D.eyeZ);
+    upper.add(eye);
+  }
+
   // Stubby legs rotate at the hips.
-  const legL = pivot(-0.19, HIP_Y, 0);
-  legL.add(mesh(G.legL, 0, -0.24));
-  const legR = pivot(0.19, HIP_Y, 0);
-  legR.add(mesh(G.legR, 0, -0.24));
+  const legL = pivot(-D.legX, D.hipY, 0);
+  legL.add(mesh(G.legL, 0, -D.legDrop));
+  const legR = pivot(D.legX, D.hipY, 0);
+  legR.add(mesh(G.legR, 0, -D.legDrop));
 
   grp.add(upper, legL, legR);
   grp.userData = {
     canvas, ctx, texture, material, paintUrl: null,
     joints: { upper, armL, armR, legL, legR },
     paintMeshes,
+    shape, dims: D,
+    scale: HIDER_SCALE * charScale(),
   };
   if (paintUrl) applyPaintUrl(grp, paintUrl);
   return grp;
@@ -770,6 +874,7 @@ function applyPaintUrl(grp, url) {
 // spread wide, ry = facing OUT of the wall).
 function setPose(g, pose) {
   const S = g.userData.scale || HIDER_SCALE;   // hiders are tiny, seekers full-size
+  const D = g.userData.dims || { flatY: 0.38, ballY: 0.15, kneelY: -0.10 };
   const j = g.userData.joints;
   // Reset to a clean standing rig (arms splay slightly outward, like the
   // figures — they never hang dead straight).
@@ -796,10 +901,10 @@ function setPose(g, pose) {
       // beside the torso instead of vanishing into it.
       j.legL.rotation.set(-1.9, 0, -0.35); j.legR.rotation.set(-1.9, 0, 0.35);
       j.armL.rotation.set(0.3, 0, -0.2); j.armR.rotation.set(0.3, 0, 0.2);
-      g.userData.baseY = -0.1 * S;
+      g.userData.baseY = D.kneelY * S;
       break;
     case 'flat':                      // lie flat on the back, straight
-      g.rotation.x = -Math.PI / 2; g.userData.baseY = 0.38 * S;
+      g.rotation.x = -Math.PI / 2; g.userData.baseY = D.flatY * S;
       break;
     case 'ball':                      // curl into a round ball, face down
       // Gentler tucks: the short limbs hug the ball's outside instead of
@@ -807,10 +912,10 @@ function setPose(g, pose) {
       j.upper.rotation.x = 1.7;
       j.armL.rotation.set(-1.05, 0, -0.45); j.armR.rotation.set(-1.05, 0, 0.45);
       j.legL.rotation.set(-1.15, 0, -0.35); j.legR.rotation.set(-1.15, 0, 0.35);
-      g.userData.baseY = 0.15 * S;
+      g.userData.baseY = D.ballY * S;
       break;
     case 'star':                      // starfish flat on the floor, face down
-      g.rotation.x = Math.PI / 2; g.userData.baseY = 0.38 * S;
+      g.rotation.x = Math.PI / 2; g.userData.baseY = D.flatY * S;
       // Wider X: arms swing further out so the whole limb clears the torso.
       j.armL.rotation.set(2.5, 0, -1.15); j.armR.rotation.set(2.5, 0, 1.15);
       j.legL.rotation.z = -0.7; j.legR.rotation.z = 0.7;
@@ -831,7 +936,7 @@ function setFound(g, found) {
 }
 
 function ensureMyChar(body) {
-  if (!myChar) { myChar = buildCharacter(body.paint || null); scene.add(myChar); myChar.userData.pose = null; }
+  if (!myChar) { myChar = buildCharacter(body.paint || null, myShape); scene.add(myChar); myChar.userData.pose = null; }
   if (myChar.userData.pose !== body.pose) { setPose(myChar, body.pose); myChar.userData.pose = body.pose; }
   myChar.position.set(body.x, (body.y || 0) + (myChar.userData.baseY || 0), body.z);
   myChar.rotation.y = body.ry || 0;
@@ -841,7 +946,7 @@ function removeMyChar() { if (myChar) { scene.remove(myChar); myChar = null; } }
 // Turn a freshly built mannequin into a SEEKER: full-size and charcoal-dark,
 // unmistakable next to the tiny white hiders.
 function makeSeekerLook(g) {
-  g.userData.scale = SEEKER_SCALE;
+  g.userData.scale = SEEKER_SCALE * charScale();
   const { ctx, texture } = g.userData;
   ctx.fillStyle = '#3a3f47'; ctx.fillRect(0, 0, ATLAS, ATLAS);
   texture.needsUpdate = true;
@@ -878,11 +983,11 @@ function buildPaintGun() {
 
 function ensureSeekerChar(p) {
   if (!seekerChar) {
-    seekerChar = buildCharacter(null);
+    seekerChar = buildCharacter(null, myShape);
     makeSeekerLook(seekerChar);
     // Gun held out front at chest height; the pivot pitches with the aim.
     gunPivot = new THREE.Group();
-    gunPivot.position.set(0.34, 1.0, 0.1);   // right hand, unscaled rig units
+    gunPivot.position.set(0.34, seekerChar.userData.dims.gunY, 0.1);   // right hand, unscaled rig units
     paintGun = buildPaintGun();
     paintGun.position.set(0, 0, -0.28);
     gunPivot.add(paintGun);
@@ -897,18 +1002,54 @@ function removeSeekerChar() {
   if (seekerChar) { scene.remove(seekerChar); seekerChar = null; paintGun = null; gunPivot = null; }
 }
 
+// Floating name tags over teammates' heads: hiders see fellow hiders' names,
+// seekers see fellow seekers' — never the other team (that would give away
+// hiding spots). At round end everyone sees every seeker's tag too (hiders
+// get the big beacon labels instead).
+const nameTags = new Map();
+function makeNameTag(name) {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+  const cx = cv.getContext('2d');
+  const text = (name || '').slice(0, 12);
+  cx.font = '800 30px "Baloo 2", sans-serif';
+  const w = Math.min(248, cx.measureText(text).width + 30);
+  cx.fillStyle = 'rgba(255,255,255,.92)';
+  cx.beginPath(); cx.roundRect(128 - w / 2, 8, w, 42, 21); cx.fill();
+  cx.lineWidth = 4; cx.strokeStyle = 'rgba(58,44,26,.7)'; cx.stroke();
+  cx.fillStyle = '#3a2c1a'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText(text, 128, 30);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(cv), transparent: true, depthTest: false,
+  }));
+  spr.renderOrder = 998;
+  return spr;
+}
+function removeNameTag(id) {
+  const t = nameTags.get(id);
+  if (!t) return;
+  scene.remove(t);
+  t.material.map.dispose(); t.material.dispose();
+  nameTags.delete(id);
+}
+function tagVisibleFor(b) {
+  if (!b.name || b.mine) return false;
+  if (snap.phase === 'roundover') return !!b.seeker;  // hiders have beacon labels
+  return !!b.seeker === (snap.myRole === 'seeker');   // teammates only
+}
+
 function syncHunt(bodies, skipMine) {
   const seen = new Set();
   for (const b of bodies) {
     if (b.mine && (skipMine || b.seeker)) continue; // my own body renders locally
     seen.add(b.id);
     let g = charGroups.get(b.id);
-    // Infection mode: a caught hider re-enters as a seeker — rebuild the rig.
-    if (g && !!g.userData.isSeeker !== !!b.seeker) {
+    // Rebuild the rig when the role changes (infection mode) or the body
+    // shape doesn't match (first sync after a shape is known).
+    if (g && (!!g.userData.isSeeker !== !!b.seeker || g.userData.shape !== (b.shape || 'egg'))) {
       scene.remove(g); charGroups.delete(b.id); g = null;
     }
     if (!g) {
-      g = buildCharacter(b.paint);
+      g = buildCharacter(b.paint, b.shape || 'egg');
       g.userData.hiderId = b.id;
       // Leave pose null so the first sync ALWAYS runs setPose — presetting
       // 'standing' skipped it, so standing remote hiders never got their
@@ -926,9 +1067,21 @@ function syncHunt(bodies, skipMine) {
     if (!g.userData.init) { g.position.set(b.x, ty, b.z); g.rotation.y = b.ry || 0; g.userData.init = true; }
     g.userData.tgt = { x: b.x, y: ty, z: b.z, ry: b.ry || 0 };
     if (!b.seeker) setFound(g, b.found);
+    // Name tag (teammates only; see tagVisibleFor).
+    if (tagVisibleFor(b)) {
+      if (!nameTags.has(b.id)) {
+        const spr = makeNameTag(b.name);
+        const w = 0.72 * charScale();
+        spr.scale.set(w, w * 0.25, 1);
+        scene.add(spr);
+        nameTags.set(b.id, spr);
+      }
+    } else {
+      removeNameTag(b.id);
+    }
   }
   for (const [id, g] of [...charGroups]) {
-    if (!seen.has(id)) { scene.remove(g); charGroups.delete(id); }
+    if (!seen.has(id)) { scene.remove(g); charGroups.delete(id); removeNameTag(id); }
   }
 }
 
@@ -937,7 +1090,7 @@ function syncHunt(bodies, skipMine) {
 // The local hider also gets a stretch in the air (snappy cartoon jump).
 function updateRemoteAnims(dt, t) {
   const k = Math.min(1, dt * 11);
-  for (const [, g] of charGroups) {
+  for (const [id, g] of charGroups) {
     const tgt = g.userData.tgt;
     if (!tgt) continue;
     const px = g.position.x, pz = g.position.z;
@@ -945,6 +1098,14 @@ function updateRemoteAnims(dt, t) {
     g.position.y += (tgt.y - g.position.y) * k;
     g.position.z += (tgt.z - g.position.z) * k;
     g.rotation.y += angleDelta(g.rotation.y, tgt.ry) * k;
+    // Keep the teammate name tag floating just above the head.
+    const tag = nameTags.get(id);
+    if (tag) {
+      tag.position.set(
+        g.position.x,
+        g.position.y - (g.userData.baseY || 0) + CHAR_LEN * (g.userData.scale || HIDER_SCALE) + 0.12,
+        g.position.z);
+    }
     if ((g.userData.pose || 'standing') === 'climb') continue;   // held on the wall
     const j = g.userData.joints;
     const speed = Math.hypot(g.position.x - px, g.position.z - pz) / Math.max(dt, 0.001);
@@ -969,7 +1130,8 @@ function updateRemoteAnims(dt, t) {
     j.upper.scale.y = 1 + Math.sin(t * 2.1) * 0.015;
     const vy = myBody.vy || 0;
     const stretch = Math.abs(vy) > 0.6 ? clamp(1 + vy * 0.02, 0.88, 1.14) : 1;
-    myChar.scale.y += (HIDER_SCALE * stretch - myChar.scale.y) * Math.min(1, dt * 14);
+    const baseS = myChar.userData.scale || HIDER_SCALE;
+    myChar.scale.y += (baseS * stretch - myChar.scale.y) * Math.min(1, dt * 14);
   }
   // The local seeker's own body: swing the limbs while striding.
   if (seekerChar && seekerPos && !seekerPeek) {
@@ -993,6 +1155,7 @@ function updateRemoteAnims(dt, t) {
 function clearChars() {
   for (const [, g] of charGroups) scene.remove(g);
   charGroups.clear();
+  for (const id of [...nameTags.keys()]) removeNameTag(id);
 }
 const _v3 = new THREE.Vector3();
 
@@ -1054,7 +1217,9 @@ function paintSphere(worldPoint) {
 function paintRaycast(clientX, clientY) {
   if (!myChar) return false;
   raycaster.setFromCamera(tapNDC(clientX, clientY), camera);
-  const hit = raycaster.intersectObject(myChar, true)[0];
+  // Only the skin meshes — the eyes aren't paintable (their UVs would smear
+  // paint into the wrong atlas region).
+  const hit = raycaster.intersectObjects(myChar.userData.paintMeshes, false)[0];
   if (hit && hit.uv) {
     paintSphere(hit.point);        // seamless coverage across joints
     paintAtUV(hit.uv);             // smooth connected stroke on the hit part
@@ -1241,7 +1406,7 @@ function isClear(x, y, z, rad) {
   }
   if (isFinite(minAround) && top - minAround > 0.35) return false;
   const gy = groundUnder(x, y + 0.4, z);
-  if (clearanceAbove(x, gy, z) < MIN_HEADROOM_HIDER) return false;
+  if (clearanceAbove(x, gy, z) < MIN_HEADROOM_HIDER * charScale()) return false;
   for (const [dx, dz] of DEPEN_DIRS) {
     if (castDist(x, y + 0.15, z, dx, dz) < rad) return false;
   }
@@ -1403,7 +1568,7 @@ function applyMovement(dt) {
 
   if (hiderControls()) {
     const p = myBody; p.vy = p.vy || 0;
-    const HRAD = 0.16, RAYY = (p.y || 0) + 0.1;
+    const HRAD = 0.16 * charScale(), RAYY = (p.y || 0) + 0.1;
     if (climbing) {
       // On the wall: up/down climbs, left/right sidles along the surface.
       // Screen-right while the camera faces the wall (along climbDir) is
@@ -1457,7 +1622,7 @@ function applyMovement(dt) {
         [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
         // Stay on the building floor, and never crawl under furniture.
         const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
-        if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_HIDER)) {
+        if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_HIDER * charScale())) {
           p.x = nx; p.z = nz;
         }
       }
@@ -1481,7 +1646,7 @@ function applyMovement(dt) {
     // Slim on purpose: the flat's bedroom doorways are narrow, and a fat
     // radius trapped seekers inside. Slight visual clipping at door edges is
     // far better than being stuck.
-    const SRAD = 0.15, RAYY = (p.y || 0) + 0.25;
+    const SRAD = 0.15 * charScale(), RAYY = (p.y || 0) + 0.25 * charScale();
     // Third person: move camera-relative and turn the body to face travel.
     const mv = moveVector();
     // FPS: the body always faces where the camera looks (the gun IS the aim).
@@ -1492,7 +1657,7 @@ function applyMovement(dt) {
       let nz = clamp(p.z + mv.z * mv.mag * spd * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 0.5);
       const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
-      if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER)) {
+      if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER * charScale())) {
         p.x = nx; p.z = nz; // stay on the building floor, out from under furniture
       }
     }
@@ -1608,8 +1773,9 @@ function updateCamera() {
     cam.pitch = clamp(cam.pitch, -0.55, 0.85);
     const f = forwardXZ(cam.yaw);
     const rx = -f.z, rz = f.x;                       // camera-right
-    const side = 0.25, dist = 0.95;                  // framing scaled to the half-size hunter
-    const pivotY = (p.y || 0) + (seekerPeek ? 0.21 : 0.65);
+    const cs = charScale();                          // framing follows the hunter's size
+    const side = 0.25 * cs, dist = 0.95 * cs;
+    const pivotY = (p.y || 0) + (seekerPeek ? 0.21 : 0.65) * cs;
     const px = p.x + rx * side, pz = p.z + rz * side;
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     // View direction (pitch+ looks down), camera sits behind the pivot.
@@ -1643,11 +1809,11 @@ function updateCamera() {
     return;
   }
 
-  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * 2);
+  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * charScale() * 2);
   else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) overShoulder(seekerPos);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
-    if (mine) thirdPerson(mine, HIDER_SCALE * 2);
+    if (mine) thirdPerson(mine, HIDER_SCALE * charScale() * 2);
     else firstPerson(seekerPos || { x: 0, z: -8 });
   }
 }
@@ -1824,7 +1990,8 @@ function keyboardVec() {
 function canZoom() { return hiderControls() || iSpectate(); }
 function applyZoom(delta) {
   const z = (snap && snap.phase === 'hunt' && snap.myRole === 'seeker') ? ZOOM_SEEKER : ZOOM_HIDER;
-  TP.dist = clamp(TP.dist + delta, z.min, z.max);
+  const cs = charScale();
+  TP.dist = clamp(TP.dist + delta * cs, z.min * cs, z.max * cs);
 }
 $('stage').addEventListener('wheel', (e) => {
   if (canZoom()) { applyZoom(e.deltaY * 0.004); e.preventDefault(); }
@@ -2131,7 +2298,7 @@ function openSheet(which) {
   document.body.classList.toggle('paint-mode', which === 'paint');
   if (which === 'paint' && !wasPaint && canZoom()) {
     prePaintDist = TP.dist;
-    TP.dist = 0.75;                 // zoom in on your own body…
+    TP.dist = 0.75 * charScale();   // zoom in on your own body…
     cam.pitch = 0.25;               // …and level out so you see it side-on
   } else if (wasPaint && which !== 'paint' && prePaintDist != null) {
     TP.dist = prePaintDist;         // back out to the hiding view
@@ -2269,7 +2436,7 @@ function renderGame() {
     myBody = { x: snap.myBody.x, y: snap.myBody.y, z: snap.myBody.z, ry: snap.myBody.ry,
                pose: snap.myBody.pose || 'standing', paint: snap.myBody.paint || null };
     myBodyRound = snap.round;
-    cam.yaw = (snap.myBody.ry || 0); cam.pitch = 0.35; TP.dist = 1.1; // reset zoom
+    cam.yaw = (snap.myBody.ry || 0); cam.pitch = 0.35; TP.dist = 1.1 * charScale(); // reset zoom
     climbing = false;
     myWhistleDeadline = 0;
     removeMyChar();                 // fresh mannequin (or restored paint)
@@ -2588,11 +2755,13 @@ window.__state = () => ({
   phase: snap && snap.phase, role: snap && snap.myRole,
   joyId, keyW: !!keyState['w'], frame: frameCount,
   camYaw: +cam.yaw.toFixed(2), ry: myBody ? +(myBody.ry || 0).toFixed(2) : null,
-  bodies: (snap && snap.bodies || []).map((b) => ({ x: +b.x.toFixed(1), y: +(b.y || 0).toFixed(1), z: +b.z.toFixed(1), found: !!b.found })),
+  tags: [...nameTags.entries()].map(([id, t]) => ({ id, x: +t.position.x.toFixed(1), y: +t.position.y.toFixed(1), z: +t.position.z.toFixed(1) })),
+  bodies: (snap && snap.bodies || []).map((b) => ({ id: b.id, name: b.name, shape: b.shape, seeker: !!b.seeker, x: +b.x.toFixed(1), y: +(b.y || 0).toFixed(1), z: +b.z.toFixed(1), found: !!b.found })),
 });
 
 // ---- Boot ---------------------------------------------------------------
 buildAvatars();
+buildShapes();
 show('home');
 const params = new URLSearchParams(location.search);
 if (params.get('room')) $('codeInput').value = params.get('room').toUpperCase();

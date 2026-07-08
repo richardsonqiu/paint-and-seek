@@ -57,6 +57,7 @@ export const MAPS = {
     id: 'rooms',
     name: 'The Flat',
     size: { x: 48, z: 24, h: 12 },
+    charScale: 1,      // reference map — hider/seeker sizes are tuned here
     ground: '#8c9498',
     sky: '#cfe2f1',
     fog: { color: '#dcebf4', near: 45, far: 130 },
@@ -83,6 +84,7 @@ export const MAPS = {
     id: 'plaza',
     name: 'The Plaza',
     size: { x: 52, z: 52, h: 14 },
+    charScale: 1.4,    // open-air square: bigger bodies so they read outdoors
     ground: '#8fae74',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 45, far: 140 },
@@ -107,6 +109,7 @@ export const MAPS = {
     id: 'city',
     name: 'Mega City',
     size: { x: 160, z: 160, h: 40 },
+    charScale: 2,      // huge districts: characters scale up to match streets
     ground: '#9fb08a',
     sky: '#bcd6ea',
     fog: { color: '#cfe0ec', near: 70, far: 230 },
@@ -135,6 +138,7 @@ export const MAPS = {
     id: 'grounds',
     name: 'The Grounds',
     size: { x: 54, z: 54, h: 10 },
+    charScale: 1.3,    // Kenney props are people-sized; lift the doodlers a bit
     ground: '#6fa84e',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 34, far: 88 },
