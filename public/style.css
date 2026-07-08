@@ -1,11 +1,12 @@
-/* Meccha Doodlers — bright chunky party-game UI (à la Meccha Chameleon). */
+/* Doodle Guys — bright chunky party-game UI, sky-blue like the main menu. */
 :root {
-  --bg: #8ed14f;            /* leafy green */
-  --bg2: #b7e56e;
+  --bg: #35b9f2;            /* sky blue */
+  --bg2: #7fd9ff;
   --card: #fffdf3;
   --card2: #f4eed6;
   --ink: #3a2c1a;
   --muted: #93855f;
+  --deep: #0d466e;          /* dark navy for text on the sky */
   --accent: #ff8a00;        /* chameleon orange */
   --accent2: #29b6f6;       /* seeker blue */
   --good: #58c443;
@@ -13,7 +14,7 @@
   --danger: #ff5252;
   --radius: 20px;
   --border: 3px solid #3a2c1a;
-  --shadow: 0 5px 0 rgba(58, 44, 26, .28);
+  --shadow: 0 5px 0 rgba(20, 71, 107, .30);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --font: 'Baloo 2', 'Arial Rounded MT Bold', system-ui, sans-serif;
 }
@@ -22,9 +23,7 @@
 html, body {
   margin: 0; height: 100%;
   font-family: var(--font);
-  background:
-    radial-gradient(90% 60% at 50% -10%, var(--bg2), transparent),
-    repeating-linear-gradient(-35deg, var(--bg) 0 42px, #85c94a 42px 84px);
+  background: linear-gradient(180deg, #29a9ee 0%, #56c5f7 45%, #a8e6ff 100%);
   color: var(--ink);
   overscroll-behavior: none;
   -webkit-user-select: none; user-select: none;
@@ -125,7 +124,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .btn.primary { background: linear-gradient(180deg, #ffb63d, var(--accent)); color: #4a2600; }
 .btn.secondary { background: linear-gradient(180deg, #6fd6ff, var(--accent2)); color: #06303f; }
 .btn.big { width: 100%; padding: 16px; font-size: 19px; }
-.btn.ghost { background: transparent; border: none; box-shadow: none; color: #2c4a12; padding: 8px 10px; }
+.btn.ghost { background: transparent; border: none; box-shadow: none; color: var(--deep); padding: 8px 10px; }
 .btn:disabled { filter: grayscale(.6) brightness(.85); cursor: not-allowed; }
 
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); margin: 14px 0; font-size: 13px; font-weight: 700; }
@@ -136,7 +135,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .join-row .btn { white-space: nowrap; }
 
 .error { color: var(--danger); font-size: 14px; min-height: 18px; margin: 8px 0 0; text-align: center; font-weight: 700; }
-.footnote { color: #2c4a12; font-size: 12.5px; text-align: center; opacity: .85; font-weight: 600; }
+.footnote { color: var(--deep); font-size: 12.5px; text-align: center; opacity: .85; font-weight: 600; }
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
@@ -160,6 +159,25 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .tagbadge.hider { background: var(--good); color: #fff; }
 .tagbadge.found { background: #b9a; color: #fff; }
 .tagbadge.ready { background: var(--good); color: #fff; }
+.tagbadge.bot { background: #b9c3cf; color: #263340; }
+
+/* Eyedropper feedback: ring at the tap + droplet flying to the brush */
+.pick-ring {
+  position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px;
+  border: 4px solid #fff; border-radius: 50%; pointer-events: none; z-index: 60;
+  animation: pickring .6s ease-out forwards;
+}
+@keyframes pickring {
+  0% { transform: scale(.6); opacity: 1; }
+  100% { transform: scale(3.2); opacity: 0; }
+}
+.pick-drop {
+  position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+  border-radius: 50% 50% 50% 4px; border: 2.5px solid rgba(58,44,26,.7);
+  pointer-events: none; z-index: 61; opacity: 1;
+  transition: transform .55s cubic-bezier(.5,-.2,.6,1), opacity .55s ease;
+}
+.paint-hint { font-size: 12px; font-weight: 700; color: var(--deep); text-align: center; margin: 2px 0 0; opacity: .85; }
 
 /* Round-over scoreboard: everyone must press Next; map peeking allowed. */
 #nextBtn { margin-top: 12px; }
@@ -296,7 +314,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .banner.seeker h1 { color: var(--accent2); }
 
 /* Overlays */
-.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(44, 74, 18, .55); backdrop-filter: blur(4px); z-index: 10; padding: 16px; }
+.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13, 52, 82, .55); backdrop-filter: blur(4px); z-index: 10; padding: 16px; }
 .overlay-inner { text-align: center; max-width: 380px; width: 100%; }
 .overlay-inner.card { max-height: 82vh; overflow-y: auto; }
 .overlay-inner h2 { color: #fffdf3; text-shadow: 0 3px 0 #3a2c1a, -1.5px -1.5px 0 #3a2c1a, 1.5px -1.5px 0 #3a2c1a, -1.5px 1.5px 0 #3a2c1a, 1.5px 1.5px 0 #3a2c1a; font-size: 28px; }
@@ -382,6 +400,12 @@ body.paint-mode .whistle-meter { display: none !important; }
 .swatch.active { border-color: #3a2c1a; transform: scale(1.12); }
 
 /* Seeker paint-gun health (misses cost paint!) */
+/* Fire-button reload sweep: a radial wipe that empties as the gun reloads.
+   (.action-btn is position:absolute, so it works as the containing block.) */
+.fire-cd {
+  position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+}
+
 .seeker-hp {
   position: absolute; top: calc(env(safe-area-inset-top, 0px) + 62px); left: 50%;
   transform: translateX(-50%); z-index: 5; display: flex; gap: 4px;
@@ -443,18 +467,16 @@ body.paint-mode .whistle-meter { display: none !important; }
 .emote { font-size: 20px; background: var(--card); border: 2.5px solid #3a2c1a; border-radius: 12px; width: 44px; height: 40px; cursor: pointer; box-shadow: 0 3px 0 rgba(58,44,26,.28); }
 .emote:active { transform: translateY(2px); box-shadow: none; }
 
-/* Directional whistle cue: an arrow that swings toward the sound source */
-.whistle-dir {
-  position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%);
-  z-index: 7; pointer-events: none; text-align: center;
-  animation: whistleFade 2s ease-out forwards;
-}
-.whistle-dir span { font-size: 26px; display: block; }
-.whistle-arrow {
+/* Directional whistle cues: arrows orbit the crosshair, one per whistling
+   hider, live-updating direction as the camera pans. */
+.whistle-dirs { position: absolute; top: 50%; left: 50%; z-index: 7; pointer-events: none; }
+.whistle-dirs .wcue { position: absolute; top: 0; left: 0; text-align: center; transition: opacity .25s linear; }
+.whistle-dirs .warrow {
   font-size: 34px; color: var(--warn); line-height: 1;
+  transform: rotate(-90deg);      /* ➤ points right; make it point outward */
   text-shadow: 0 0 4px rgba(58,44,26,.6);
 }
-@keyframes whistleFade { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+.whistle-dirs .wface { font-size: 24px; display: block; }
 
 .emote-float { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 8; }
 .emote-float .fly { position: absolute; font-size: 34px; animation: fly 1.6s ease-out forwards; }
@@ -472,7 +494,7 @@ body.paint-mode .whistle-meter { display: none !important; }
   body.in-game .rotate-overlay {
     display: flex; position: fixed; inset: 0; z-index: 100;
     align-items: center; justify-content: center; text-align: center;
-    background: rgba(44, 74, 18, .93); backdrop-filter: blur(6px);
+    background: rgba(13, 52, 82, .93); backdrop-filter: blur(6px);
     padding: 24px; cursor: pointer;
   }
 }

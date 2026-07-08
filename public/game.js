@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=18';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=19';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -62,11 +62,14 @@ function toast(msg, ms = 1800) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
 }
-// A little chameleon head-count icon that flips white → red when caught
-// (the signature Meccha Chameleon HUD element).
+// A little doodler head-count icon (matches the egg mascots): white with
+// eyes = still hidden, red with a cross = caught.
 function lizardIcon(caught) {
-  const c = caught ? '#ff4d4d' : '#ffffff';
-  return `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="${c}" d="M4 13c0-4.4 3.6-8 8-8 3.6 0 6.7 2.4 7.7 5.7l.3 1.3c.6.2 1 .8 1 1.5 0 .9-.7 1.6-1.6 1.6h-.5c-1.3 2.9-4.2 4.9-7.4 4.9H8.5C6 20 4 18 4 15.5V13z"/><circle cx="15.5" cy="11" r="1.4" fill="${caught ? '#7a1020' : '#3a2c1a'}"/></svg>`;
+  const c = caught ? '#ff6b6b' : '#ffffff';
+  const face = caught
+    ? '<path d="M6.8 9 L13.2 14.5 M13.2 9 L6.8 14.5" stroke="#7a1020" stroke-width="2.2" stroke-linecap="round"/>'
+    : '<rect x="6.9" y="7.6" width="2" height="4.6" rx="1" fill="#26262b"/><rect x="11.1" y="7.6" width="2" height="4.6" rx="1" fill="#26262b"/>';
+  return `<svg viewBox="0 0 20 24" width="17" height="20"><path fill="${c}" stroke="#20303e" stroke-width="1.6" d="M10 1.8 C15 1.8 17.6 6.8 17.6 13 C17.6 19 14.6 22.2 10 22.2 C5.4 22.2 2.4 19 2.4 13 C2.4 6.8 5 1.8 10 1.8 Z"/>${face}</svg>`;
 }
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -215,6 +218,7 @@ $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTi
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
 $('seekersInput').addEventListener('change', () => socket.emit('settings', { seekers: +$('seekersInput').value }));
+$('botsInput').addEventListener('change', () => socket.emit('settings', { bots: +$('botsInput').value }));
 $('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value === 'on' }));
 
 function renderLobby() {
@@ -223,6 +227,7 @@ function renderLobby() {
   $('playerCount').textContent = `(${snap.players.length}/12)`;
   $('playerList').innerHTML = snap.players.map((p) => `
     <li><span class="pemoji">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span>
+    ${p.isBot ? '<span class="tagbadge bot">BOT</span>' : ''}
     ${p.isHost ? '<span class="tagbadge host">HOST</span>' : ''}</li>`).join('');
   $('hostSettings').classList.toggle('hidden', !isHost);
   $('guestWait').classList.toggle('hidden', isHost);
@@ -235,6 +240,7 @@ function renderLobby() {
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
     $('seekersInput').value = snap.settings.seekers || 1;
+    $('botsInput').value = snap.settings.bots || 0;
     $('whistleSelect').value = snap.settings.whistle === false ? 'off' : 'on';
   }
 }
@@ -1796,16 +1802,13 @@ function updateCamera() {
     camera.lookAt(px + vx * 8, pivotY + vy * 8, pz + vz * 8);
   };
 
-  // Round-end reveal: zoom right out and slowly orbit the whole map so
-  // everyone can see where the hiders were tucked away (ceilings are
-  // stripped from the maps, so the elevated camera sees into every room).
+  // Round-end reveal: a guided tour. Brief zoomed-out overview, then the
+  // camera flies from hiding spot to hiding spot — in the order a seeker
+  // would sweep them — pausing close-up at each so everyone sees HOW each
+  // hider was tucked in. Ends back on the slow overview orbit.
   if (snap && snap.phase === 'roundover') {
-    const ms = (snap.mapSize || { x: 30, z: 30 });
-    const R = Math.max(ms.x, ms.z);
-    const ang = performance.now() / 1000 * 0.1;
     camera.up.set(0, 1, 0);
-    camera.position.set(Math.sin(ang) * R * 0.42, R * 0.6, Math.cos(ang) * R * 0.42);
-    camera.lookAt(0, 0, 0);
+    revealCamera();
     return;
   }
 
@@ -1863,8 +1866,19 @@ function updateActionButtons() {
   }
   $('clingBtn').classList.toggle('on', climbing);
   $('clingBtn').querySelector('.lbl').textContent = climbing ? 'Drop' : 'Wall';
-  // Crosshair turns red while the seeker's paint gun reloads.
-  if (seekerHunt) $('crosshair').classList.toggle('reloading', (Date.now() - lastShotAt) < 1000);
+  // Reload feedback: the crosshair turns red and a radial sweep drains off
+  // the Fire button while the paint gun reloads.
+  if (seekerHunt) {
+    const since = Date.now() - lastShotAt;
+    const reloading = since < RELOAD_MS;
+    $('crosshair').classList.toggle('reloading', reloading);
+    $('fireCd').style.background = reloading
+      ? `conic-gradient(transparent ${(since / RELOAD_MS) * 360}deg, rgba(30,30,40,.55) 0)`
+      : 'none';
+    const lbl = $('fireBtn').querySelector('.lbl');
+    const txt = reloading ? `${Math.ceil((RELOAD_MS - since) / 1000)}s…` : 'Fire';
+    if (lbl.textContent !== txt) lbl.textContent = txt;
+  }
 }
 
 let frameCount = 0;
@@ -1881,6 +1895,7 @@ function tick(dt, render) {
     const pillar = g.children[0];
     if (pillar && pillar.material) { pillar.rotation.y += dt * 2; pillar.material.opacity = 0.4 + 0.25 * Math.sin(t * 5); }
   }
+  updateWhistleCues();
   updateActionButtons();
   updateCamera();
   renderer.render(scene, camera);
@@ -2100,7 +2115,7 @@ function handleTap(clientX, clientY) {
     // the brush. Reading the rendered image (with lighting + fog) gives the
     // colour the surface actually shows on screen — the best camouflage match.
     const color = sampleScreenColor(clientX, clientY);
-    if (color) { setBrushColor(color); rememberColor(color); SFX.click(); toast(`🎨 Colour picked`, 700); }
+    if (color) { setBrushColor(color); rememberColor(color); SFX.click(); pickFeedback(clientX, clientY, color); }
   }
   // Seekers do NOT shoot on tap — taps/drags are camera-only. The gun always
   // points at the crosshair and fires from the Fire button (shooter-style),
@@ -2111,11 +2126,12 @@ function handleTap(clientX, clientY) {
 // The blast (and any catch) is resolved + broadcast by the server, so the
 // splat shows for everyone via the 'blast' event.
 const SHOOT_COLORS = ['#ff3bd0', '#ffd23b', '#3bd1ff', '#7CFC00', '#ff6b3b', '#b14bff'];
+const RELOAD_MS = 3000;   // shots are free — missing just costs this wait
 let lastShotAt = 0;
 function seekerShoot() {
   if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker') return;
   const now = Date.now();
-  if (now - lastShotAt < 1000) return; // reloading
+  if (now - lastShotAt < RELOAD_MS) return; // reloading
   raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);  // dead centre
   const targets = [];
   if (roomGroup) targets.push(roomGroup);
@@ -2213,30 +2229,51 @@ function clearSplats() {
   splatDecals.length = 0;
 }
 
-// Render the scene to an off-screen target and read back one pixel under the
-// tap, returning a "#rrggbb" string (or null if it landed on open sky).
-let pickTarget = null;
+// Read the EXACT pixel the player sees under the tap, as a "#rrggbb" string.
+// We re-render to the canvas and read the drawing buffer in the same task —
+// an off-screen render target would skip three.js's linear→sRGB output
+// conversion, so the sampled colour came back darker than the screen showed
+// (the old "eyedropper doesn't match" bug).
 function sampleScreenColor(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
-  const dpr = renderer.getPixelRatio();
-  const w = Math.max(1, Math.floor(r.width * dpr));
-  const h = Math.max(1, Math.floor(r.height * dpr));
-  if (!pickTarget) {
-    pickTarget = new THREE.WebGLRenderTarget(w, h);
-    pickTarget.texture.colorSpace = THREE.SRGBColorSpace; // read sRGB bytes
-  } else {
-    pickTarget.setSize(w, h);
-  }
-  renderer.setRenderTarget(pickTarget);
-  renderer.render(scene, camera);
-  renderer.setRenderTarget(null);
-
-  const px = Math.min(w - 1, Math.max(0, Math.floor((clientX - r.left) * dpr)));
-  const py = Math.min(h - 1, Math.max(0, Math.floor((r.height - (clientY - r.top)) * dpr)));
+  const gl = renderer.getContext();
+  renderer.render(scene, camera);          // fresh frame in the drawing buffer
+  const bw = gl.drawingBufferWidth, bh = gl.drawingBufferHeight;
+  const px = Math.min(bw - 1, Math.max(0, Math.floor(((clientX - r.left) / r.width) * bw)));
+  const py = Math.min(bh - 1, Math.max(0, Math.floor((1 - (clientY - r.top) / r.height) * bh)));
   const buf = new Uint8Array(4);
-  renderer.readRenderTargetPixels(pickTarget, px, py, 1, 1, buf);
+  gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
   const hex = (n) => n.toString(16).padStart(2, '0');
   return '#' + hex(buf[0]) + hex(buf[1]) + hex(buf[2]);
+}
+
+// Eyedropper feedback: an expanding ring at the tap plus a colour droplet
+// that flies into the brush swatch — so "tap the room = steal its colour"
+// is obvious even to first-timers.
+function pickFeedback(x, y, color) {
+  const ring = document.createElement('div');
+  ring.className = 'pick-ring';
+  ring.style.left = x + 'px'; ring.style.top = y + 'px';
+  ring.style.borderColor = color;
+  document.body.appendChild(ring);
+  setTimeout(() => ring.remove(), 700);
+
+  const drop = document.createElement('div');
+  drop.className = 'pick-drop';
+  drop.style.background = color;
+  drop.style.left = x + 'px'; drop.style.top = y + 'px';
+  document.body.appendChild(drop);
+  // Fly to the brush colour swatch (or the Paint toggle when the panel is
+  // closed) so the player sees WHERE the colour went.
+  const targetEl = sheetOpen === 'paint' ? $('colorInput') : $('paintToggle');
+  const tr = targetEl.getBoundingClientRect();
+  requestAnimationFrame(() => {
+    drop.style.transform =
+      `translate(${tr.left + tr.width / 2 - x}px, ${tr.top + tr.height / 2 - y}px) scale(.35)`;
+    drop.style.opacity = '0.15';
+  });
+  setTimeout(() => drop.remove(), 650);
+  toast(`🎨 Colour copied!`, 800);
 }
 
 // ---- Painting tools -----------------------------------------------------
@@ -2292,6 +2329,7 @@ function openSheet(which) {
   const wasPaint = sheetOpen === 'paint';
   sheetOpen = which;
   $('paintPanel').classList.toggle('hidden', which !== 'paint');
+  $('paintHint').classList.toggle('hidden', which !== 'paint');
   $('posePanel').classList.toggle('hidden', which !== 'pose');
   $('paintToggle').classList.toggle('open', which === 'paint');
   $('poseToggle').classList.toggle('open', which === 'pose');
@@ -2472,16 +2510,18 @@ function renderGame() {
       if (role === 'hider') showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
       else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
     } else if (phase === 'hunt') {
-      if (role === 'seeker') showBanner('🔫', 'GO SEEK!', 'Shoot to catch — but every miss costs you paint!', 'seeker');
-      else showBanner('🙈', 'HOLD STILL!', 'The seeker is out — stay painted, whistle wisely!', 'hider');
+      if (role === 'seeker') showBanner('🔫', 'GO SEEK!', 'Shoot to catch — reloading takes a moment, so aim well!', 'seeker');
+      else showBanner('🙈', 'HOLD STILL!', 'Stay painted! A brave manual whistle earns +10 points.', 'hider');
       if (role === 'hider') myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
     } else if (phase === 'roundover') {
-      // The signature reveal: the camera pulls right out and orbits the map
-      // while pillars + names mark where everyone was hiding.
+      // The signature reveal: overview first, then a guided close-up tour of
+      // every hiding spot (see buildRevealTour), then the scoreboard.
       showBanner('🎉', 'REVEALED!', 'Look where everyone was hiding…', '', 2600);
       mapPeek = false;
-      revealUntil = Date.now() + 5000;
-      setTimeout(() => { if (snap && snap.phase === 'roundover') renderGame(); }, 5100);
+      _revInit = false; _revLastT = performance.now();
+      revealTour = buildRevealTour();
+      revealUntil = Date.now() + revealTour.total + 600;
+      setTimeout(() => { if (snap && snap.phase === 'roundover') renderGame(); }, revealTour.total + 700);
     }
   }
 
@@ -2510,16 +2550,6 @@ function renderGame() {
   $('emoteToggle').classList.toggle('hidden', phase !== 'hunt');
   if (phase !== 'hunt' && emotesOpen) setEmotesOpen(false);
 
-  // Seeker paint-gun health: misses cost paint; dry = eliminated.
-  const meP = snap.players.find((p) => p.id === myId);
-  const showHp = isSeekerHunt && meP;
-  $('seekerHp').classList.toggle('hidden', !showHp);
-  if (showHp) {
-    const hp = meP.hp == null ? 5 : meP.hp;
-    setHTML('seekerHp', Array.from({ length: 5 }, (_, i) =>
-      `<span class="${i < hp ? '' : 'off'}">🎨</span>`).join(''));
-  }
-
   // Spectator minimap (you can roam + see everyone once caught).
   $('minimap').classList.toggle('hidden', !snap.spectating);
   if (snap.spectating) drawMinimap();
@@ -2544,6 +2574,86 @@ function renderGame() {
 }
 let revealUntil = 0;
 let mapPeek = false;
+
+// ---- Round-end reveal tour ------------------------------------------------
+// Visit every hider close-up, in the greedy nearest-neighbour order a seeker
+// would sweep them (starting from the seeker's final position).
+const TOUR_INTRO_MS = 1800, TOUR_STOP_MS = 3200, TOUR_MAX_STOPS = 6;
+let revealTour = null;
+function buildRevealTour() {
+  const bodies = snap.bodies || [];
+  const seekers = bodies.filter((b) => b.seeker);
+  let cur = seekers[0] ? { x: seekers[0].x, z: seekers[0].z } : { x: 0, z: 0 };
+  const rest = bodies.filter((b) => !b.seeker);
+  const stops = [];
+  while (rest.length && stops.length < TOUR_MAX_STOPS) {
+    let bi = 0, bd = Infinity;
+    rest.forEach((b, i) => {
+      const d = Math.hypot(b.x - cur.x, b.z - cur.z);
+      if (d < bd) { bd = d; bi = i; }
+    });
+    const b = rest.splice(bi, 1)[0];
+    stops.push({ x: b.x, y: b.y || 0, z: b.z });
+    cur = b;
+  }
+  return {
+    t0: performance.now(),
+    stops,
+    total: TOUR_INTRO_MS + stops.length * TOUR_STOP_MS,
+  };
+}
+// Where the camera WANTS to be at tour-time t (chase-lerped for smoothness).
+const _revPos = new THREE.Vector3(), _revLook = new THREE.Vector3();
+let _revLastT = 0, _revInit = false;
+function tourPose(t) {
+  const ms = snap.mapSize || { x: 30, z: 30 };
+  const R = Math.max(ms.x, ms.z);
+  const tour = revealTour;
+  if (!tour || t < TOUR_INTRO_MS || !tour.stops.length || t >= tour.total) {
+    const ang = performance.now() / 1000 * 0.1;      // slow overview orbit
+    return {
+      px: Math.sin(ang) * R * 0.42, py: R * 0.6, pz: Math.cos(ang) * R * 0.42,
+      lx: 0, ly: 0, lz: 0,
+    };
+  }
+  const seg = Math.min(tour.stops.length - 1, Math.floor((t - TOUR_INTRO_MS) / TOUR_STOP_MS));
+  const stop = tour.stops[seg];
+  const cs = charScale();
+  // Close-up: a slow orbit around the hiding spot, low enough to see how the
+  // hider is tucked against the furniture.
+  const ang = 0.9 + seg * 1.7 + ((t - TOUR_INTRO_MS) - seg * TOUR_STOP_MS) / 1000 * 0.22;
+  const d = 2.0 * cs, h = 1.15 * cs;
+  return {
+    px: stop.x + Math.sin(ang) * d, py: stop.y + h, pz: stop.z + Math.cos(ang) * d,
+    lx: stop.x, ly: stop.y + 0.2 * cs, lz: stop.z,
+  };
+}
+function revealCamera() {
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - _revLastT) / 1000); _revLastT = now;
+  const t = revealTour ? now - revealTour.t0 : Infinity;
+  const p = tourPose(t);
+  if (!_revInit) { _revPos.set(p.px, p.py, p.pz); _revLook.set(p.lx, p.ly, p.lz); _revInit = true; }
+  const k = Math.min(1, dt * 2.4);                    // chase-lerp = smooth flight
+  _revPos.x += (p.px - _revPos.x) * k; _revPos.y += (p.py - _revPos.y) * k; _revPos.z += (p.pz - _revPos.z) * k;
+  _revLook.x += (p.lx - _revLook.x) * k; _revLook.y += (p.ly - _revLook.y) * k; _revLook.z += (p.lz - _revLook.z) * k;
+  let cx = _revPos.x, cy = _revPos.y, cz = _revPos.z;
+  // Close-ups happen inside rooms: pull the camera in if a wall would block
+  // the view of the hiding spot.
+  if (revealTour && t >= TOUR_INTRO_MS && t < revealTour.total && collisionMeshes.length) {
+    _ro.set(_revLook.x, _revLook.y + 0.15, _revLook.z);
+    _rd.set(cx - _ro.x, cy - _ro.y, cz - _ro.z);
+    const full = _rd.length() || 1; _rd.normalize();
+    _rc.set(_ro, _rd); _rc.far = full;
+    const hit = _rc.intersectObjects(collisionMeshes, true)[0];
+    if (hit && hit.distance < full) {
+      const d = Math.max(0.3, hit.distance - 0.12);
+      cx = _ro.x + _rd.x * d; cy = _ro.y + _rd.y * d; cz = _ro.z + _rd.z * d;
+    }
+  }
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(_revLook.x, _revLook.y, _revLook.z);
+}
 
 // Round-end reveal markers: a pillar + floating name over EVERY hider so the
 // zoomed-out camera shows exactly who was hiding where. Gold = survived the
@@ -2652,7 +2762,12 @@ function renderScores() {
   }
 }
 $('nextBtn').addEventListener('click', () => { SFX.click(); socket.emit('next'); });
-$('peekMapBtn').addEventListener('click', () => { SFX.click(); mapPeek = true; renderGame(); });
+$('peekMapBtn').addEventListener('click', () => {
+  SFX.click();
+  mapPeek = true;
+  if (revealTour) revealTour.t0 = performance.now();  // replay the fly-through
+  renderGame();
+});
 $('showScoresBtn').addEventListener('click', () => { SFX.click(); mapPeek = false; renderGame(); });
 
 // ---- Timer --------------------------------------------------------------
@@ -2695,43 +2810,55 @@ socket.on('tagged', ({ id, name, by }) => {
     }, 1900);
   }
 });
-socket.on('miss', ({ hp }) => {
-  // My shot hit nothing — that costs paint.
+socket.on('miss', () => {
+  // My shot hit nothing — no paint lost, just the reload wait.
   SFX.caught();
-  toast(hp > 0 ? `💦 Miss! ${hp} paint left…` : '💦 Miss!', 1200);
+  toast('💦 Miss — reloading…', 1200);
   const v = $('vignette'); v.classList.remove('hidden');
   setTimeout(() => v.classList.add('hidden'), 850);
 });
-socket.on('seekerout', ({ id, name }) => {
-  if (id === myId) {
-    showBanner('🫗', 'OUT OF PAINT!', 'Too many misses — the chameleons outlasted you.', 'seeker', 2600);
-  } else {
-    toast(`🫗 ${name} ran out of paint!`);
-  }
-});
-socket.on('whistle', ({ id, x, y, z, auto }) => {
+socket.on('whistle', ({ id, x, y, z, auto, bonus }) => {
   playWhistle(x, y, z);
   if (id === myId) {
     myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
-    toast(auto ? '😗 Your auto-whistle went off!' : '😗 You whistled — timer reset!', 1300);
+    toast(auto ? '😗 Your auto-whistle went off!'
+      : (bonus ? `😗 Brave whistle — +${bonus} points, timer reset!` : '😗 You whistled — timer reset!'), 1500);
   } else if (snap && snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
-    showWhistleDirection(x, z);
+    addWhistleCue(id, x, z);
   }
 });
 
-// Swing an on-screen arrow toward the whistle source (relative to where the
-// seeker is looking) — sound alone is hard to localise on phone speakers.
-let whistleDirTimer = null;
-function showWhistleDirection(x, z) {
-  const bearing = Math.atan2(x - seekerPos.x, z - seekerPos.z);
-  const rel = angleDelta(cam.yaw, bearing);   // 0 = straight ahead
-  const el = $('whistleDir');
-  $('whistleArrow').style.transform = `rotate(${(-rel - Math.PI / 2).toFixed(3)}rad)`;
-  el.classList.remove('hidden');
-  el.style.animation = 'none'; void el.offsetWidth;  // restart the fade
-  el.style.animation = '';
-  clearTimeout(whistleDirTimer);
-  whistleDirTimer = setTimeout(() => el.classList.add('hidden'), 2000);
+// Directional whistle cues: one arrow PER whistling hider orbits the
+// crosshair and keeps tracking the sound as the seeker pans the camera
+// (sound alone is hard to localise on phone speakers).
+const whistleCues = new Map();  // hider id → { x, z, until, el, arrow, face }
+function addWhistleCue(id, x, z) {
+  let w = whistleCues.get(id);
+  if (!w) {
+    const el = document.createElement('div');
+    el.className = 'wcue';
+    el.innerHTML = '<div class="warrow">➤</div><span class="wface">😗</span>';
+    $('whistleDirs').appendChild(el);
+    w = { el, arrow: el.querySelector('.warrow'), face: el.querySelector('.wface') };
+    whistleCues.set(id, w);
+  }
+  w.x = x; w.z = z; w.until = Date.now() + 2600;
+}
+function updateWhistleCues() {
+  if (!whistleCues.size) return;
+  const now = Date.now();
+  const live = snap && snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos;
+  for (const [id, w] of [...whistleCues]) {
+    if (!live || now > w.until) { w.el.remove(); whistleCues.delete(id); continue; }
+    const bearing = Math.atan2(w.x - seekerPos.x, w.z - seekerPos.z);
+    const rel = angleDelta(cam.yaw, bearing);          // 0 = straight ahead
+    // The cue sits on a ring around the crosshair in the sound's direction;
+    // the face counter-rotates so it stays upright.
+    w.el.style.transform = `rotate(${(-rel).toFixed(3)}rad) translateY(-96px)`;
+    w.face.style.transform = `rotate(${rel.toFixed(3)}rad)`;
+    const left = w.until - now;
+    w.el.style.opacity = left < 500 ? (left / 500).toFixed(2) : '1';
+  }
 }
 socket.on('playerleft', ({ name }) => {
   toast(`🚪 ${name} left the game`, 2200);

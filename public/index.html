@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#8ed14f" />
+  <meta name="theme-color" content="#35b9f2" />
   <title>Doodle Guys — paint &amp; seek</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=18" />
+  <link rel="stylesheet" href="/style.css?v=19" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -112,8 +112,9 @@
         <label class="field"><span>Seek (s/hider)</span><input id="huntInput" type="number" min="10" max="120" /></label>
         <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="20" /></label>
         <label class="field"><span>Seekers</span><input id="seekersInput" type="number" min="1" max="11" /></label>
+        <label class="field"><span>Bots</span><input id="botsInput" type="number" min="0" max="8" /></label>
       </div>
-      <p class="footnote">Seek time is per hider (45s × 3 hiders = 135s). Everyone not seeking hides. Rounds are bumped up so every player gets a seeker turn.</p>
+      <p class="footnote">Seek time is per hider (45s × 3 hiders = 135s). Everyone not seeking hides. Bots hide (never seek) — great for playing alone. Rounds are bumped up so every player gets a seeker turn.</p>
       <label class="field"><span>Whistle</span>
         <select id="whistleSelect">
           <option value="on">On — hiders auto-whistle every 45s</option>
@@ -155,7 +156,7 @@
     <button id="jumpBtn" class="action-btn jump hidden"><span class="ic">⤴</span><span class="lbl">Jump</span></button>
     <button id="whistleBtn" class="action-btn blend hidden"><span class="ic">😗</span><span class="lbl">Whistle</span></button>
     <button id="clingBtn" class="action-btn cling hidden"><span class="ic">🧗</span><span class="lbl">Wall</span></button>
-    <button id="fireBtn" class="action-btn fire hidden"><span class="ic">🔫</span><span class="lbl">Fire</span></button>
+    <button id="fireBtn" class="action-btn fire hidden"><span id="fireCd" class="fire-cd"></span><span class="ic">🔫</span><span class="lbl">Fire</span></button>
     <button id="peekBtn" class="action-btn peek hidden"><span class="ic">🙇</span><span class="lbl">Peek</span></button>
 
     <!-- Auto-whistle countdown (hiders, hunt phase) -->
@@ -166,9 +167,6 @@
       <button id="zoomInBtn" title="Zoom in">＋</button>
       <button id="zoomOutBtn" title="Zoom out">－</button>
     </div>
-
-    <!-- Seeker paint-gun health -->
-    <div id="seekerHp" class="seeker-hp hidden"></div>
 
     <!-- Fullscreen role reveal / phase banners -->
     <div id="banner" class="banner hidden">
@@ -232,6 +230,7 @@
       <button id="fillAllBtn" class="tool" title="Fill whole body">🪣</button>
       <button id="undoBtn" class="tool" title="Undo">↩️</button>
     </div>
+    <p id="paintHint" class="paint-hint hidden">👆 Tap anything in the room to copy its colour</p>
 
     <div id="posePanel" class="toolstrip hidden">
       <button class="pose active" data-pose="standing"><span class="ic">🧍</span><span class="lbl">Stand</span></button>
@@ -246,7 +245,7 @@
 
     <!-- Seeker toolbar -->
     <div id="seekerTools" class="toolbar seeker hidden">
-      <p class="seeker-hint">🎯 Aim with the crosshair, press FIRE to shoot — every miss costs paint!</p>
+      <p class="seeker-hint">🎯 Aim with the crosshair, press FIRE — shots are free, reloading takes a moment!</p>
     </div>
 
     <!-- Emotes live behind a single toggle so they never block the view -->
@@ -259,11 +258,9 @@
       <button class="emote" data-emoji="🔥">🔥</button>
     </div>
 
-    <!-- Directional whistle cue (seeker): arrow points toward the sound -->
-    <div id="whistleDir" class="whistle-dir hidden">
-      <div id="whistleArrow" class="whistle-arrow">➤</div>
-      <span>😗</span>
-    </div>
+    <!-- Directional whistle cues (seeker): arrows orbit the crosshair, one
+         per whistling hider, live-tracking as the camera pans -->
+    <div id="whistleDirs" class="whistle-dirs"></div>
 
     <div id="emoteFloat" class="emote-float"></div>
     <div id="toast" class="toast hidden"></div>
@@ -290,6 +287,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=18"></script>
+  <script type="module" src="/game.js?v=19"></script>
 </body>
 </html>

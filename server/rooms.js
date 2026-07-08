@@ -13,6 +13,10 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused cha
 // Body shapes the client can render (see game.js SHAPE definitions).
 const BODY_SHAPES = ['egg', 'buddy', 'bean', 'bobo'];
 
+// Bot hiders for small lobbies: they wander to a hiding spot during prep,
+// strike a pose, and freeze. They never seek and are always "ready".
+const BOT_NAMES = ['Botty', 'Eggbert', 'Blobby', 'Scribbles', 'Splat', 'Crayon', 'Smudge', 'Doodle'];
+
 export { POSES };
 
 export const DEFAULT_SETTINGS = {
@@ -22,6 +26,7 @@ export const DEFAULT_SETTINGS = {
   mode: 'classic', // 'classic' | 'infection'
   rounds: 3,       // bumped up at start so every player seeks at least once
   seekers: 1,      // seekers per round; everyone else hides
+  bots: 0,         // bot hiders (great for solo play)
   whistle: true,   // hiders auto-whistle every 45s (manual whistle resets it)
 };
 
@@ -72,9 +77,35 @@ export class Room {
   removePlayer(id) {
     this.players.delete(id);
     if (id === this.hostId) {
-      const next = this.players.keys().next();
-      this.hostId = next.done ? null : next.value;
+      const next = [...this.players.values()].find((p) => !p.isBot);  // never a bot host
+      this.hostId = next ? next.id : null;
     }
+  }
+
+  humans() {
+    return this.activePlayers().filter((p) => !p.isBot);
+  }
+
+  // Keep exactly `n` bots in the room (host adjusts this in the lobby).
+  syncBots(n) {
+    const bots = [...this.players.values()].filter((p) => p.isBot);
+    for (let i = bots.length; i < n; i++) {
+      this._botSeq = (this._botSeq || 0) + 1;
+      const id = `bot-${this.code}-${this._botSeq}`;
+      this.players.set(id, {
+        id,
+        name: BOT_NAMES[(this._botSeq - 1) % BOT_NAMES.length],
+        avatar: '🤖',
+        shape: BODY_SHAPES[Math.floor(Math.random() * BODY_SHAPES.length)],
+        role: null,
+        connected: true,
+        isBot: true,
+        score: 0,
+        found: false,
+        body: blankBody(),
+      });
+    }
+    for (let i = bots.length - 1; i >= n; i--) this.players.delete(bots[i].id);
   }
 
   get map() {
@@ -94,11 +125,13 @@ export class Room {
     return this.seekers().filter((p) => !p.out);
   }
 
-  // Seekers per round: the host's setting, but always leave at least 1 hider
-  // so a solo host can test (1 player -> 0 seekers, 1 hider).
+  // Seekers per round: the host's setting, but only HUMANS ever seek (bots
+  // can't hunt) and at least 1 hider is always left over, so a solo host
+  // with no bots gets a 0-seeker practice round.
   seekerCount() {
     const n = this.activePlayers().length;
-    return Math.min(Math.max(1, this.settings.seekers || 1), Math.max(0, n - 1));
+    const h = this.humans().length;
+    return Math.min(Math.max(1, this.settings.seekers || 1), h, Math.max(0, n - 1));
   }
 
   // Fair rotation: everyone takes a seeker turn before anyone repeats. A
@@ -120,7 +153,7 @@ export class Room {
 
   assignRoles() {
     const players = this.activePlayers();
-    const seekerIds = this.drawSeekers(players, this.seekerCount());
+    const seekerIds = this.drawSeekers(this.humans(), this.seekerCount());
     // Put seekers in one room and hiders in the other rooms, at random spots,
     // so a hider never spawns right next to a seeker.
     const rooms = roomSpawns(this.map);
@@ -223,6 +256,7 @@ export class Room {
         hp: p.hp,
         out: p.out,
         ready: !!p.ready,
+        isBot: !!p.isBot,
         isHost: p.id === this.hostId,
       })),
     };
@@ -256,6 +290,7 @@ export class RoomStore {
     if (room && room._timer) clearTimeout(room._timer);
     if (room && room._whistler) clearInterval(room._whistler);
     if (room && room._pump) clearInterval(room._pump);
+    if (room && room._botTick) clearInterval(room._botTick);
     this.rooms.delete(code);
   }
 }

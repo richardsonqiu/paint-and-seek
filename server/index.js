@@ -7,7 +7,8 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import { RoomStore, POSES, clampToRoom, SEEKER_HP, WHISTLE_EVERY } from './rooms.js';
+import { RoomStore, POSES, clampToRoom, WHISTLE_EVERY } from './rooms.js';
+import { spawnPoints } from '../shared/maps.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -23,6 +24,7 @@ app.use('/shared', express.static(join(ROOT, 'shared')));
 app.get('/health', (_req, res) => res.json({ ok: true, rooms: store.rooms.size }));
 
 const PORT = process.env.PORT || 3000;
+const RELOAD_MS = 3000;   // paint-gun reload; shots themselves are free
 
 // ---- Phase engine -------------------------------------------------------
 
@@ -67,11 +69,46 @@ function enterPrep(room) {
   room.phase = 'prep';
   room.deadline = Date.now() + room.settings.prepTime * 1000;
   broadcast(room);
+  startBotHiding(room);
   room._timer = setTimeout(() => enterHunt(room), room.settings.prepTime * 1000);
+}
+
+// Bot hiders walk to a random (known-walkable) spawn spot during prep and
+// strike a pose there. Hiders are invisible to everyone during prep, so the
+// walk needs no broadcasting — only the server state matters at hunt start.
+const BOT_POSES = ['standing', 'head', 'cheer', 'zombie', 'kneel', 'flat', 'ball', 'star'];
+function startBotHiding(room) {
+  stopBots(room);
+  const bots = room.activePlayers().filter((p) => p.isBot && p.role === 'hider');
+  if (!bots.length) return;
+  const pts = spawnPoints(room.map);
+  for (const b of bots) {
+    const t = pts[Math.floor(Math.random() * pts.length)];
+    const [tx, tz] = clampToRoom(room.map, t[0] + (Math.random() * 3 - 1.5), t[2] + (Math.random() * 3 - 1.5));
+    b.botTarget = { x: tx, z: tz };
+    b.botPose = BOT_POSES[Math.floor(Math.random() * BOT_POSES.length)];
+  }
+  room._botTick = setInterval(() => {
+    if (room.phase !== 'prep') { stopBots(room); return; }
+    for (const b of room.activePlayers()) {
+      if (!b.isBot || b.role !== 'hider' || !b.botTarget) continue;
+      const dx = b.botTarget.x - b.body.x, dz = b.botTarget.z - b.body.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.15) { b.body.pose = b.botPose; continue; }
+      const step = Math.min(d, 2.2 * 0.15);           // ~2.2 m/s at 150ms ticks
+      b.body.x += (dx / d) * step;
+      b.body.z += (dz / d) * step;
+      b.body.ry = Math.atan2(dx, dz);
+    }
+  }, 150);
+}
+function stopBots(room) {
+  if (room._botTick) { clearInterval(room._botTick); room._botTick = null; }
 }
 
 function enterHunt(room) {
   clearTimer(room);
+  stopBots(room);
   room.phase = 'hunt';
   // Seek time scales with the group: huntTime is PER HIDER (45s default),
   // so a seeker hunting 3 people gets 135s.
@@ -121,9 +158,10 @@ function endRound(room, reason) {
   }
 
   // No auto-advance: the reveal + scoreboard stay up until EVERY player has
-  // pressed Next (readiness is re-checked when someone leaves, too).
+  // pressed Next (readiness is re-checked when someone leaves, too). Bots
+  // are always ready.
   room.deadline = 0;
-  for (const p of room.players.values()) p.ready = false;
+  for (const p of room.players.values()) p.ready = !!p.isBot;
   broadcast(room);
 }
 
@@ -195,6 +233,10 @@ io.on('connection', (socket) => {
     if (typeof patch.huntTime === 'number') s.huntTime = clamp(patch.huntTime, 10, 120); // per hider
     if (typeof patch.rounds === 'number') s.rounds = clamp(patch.rounds, 1, 20);
     if (typeof patch.seekers === 'number') s.seekers = clamp(Math.round(patch.seekers), 1, 11);
+    if (typeof patch.bots === 'number') {
+      s.bots = clamp(Math.round(patch.bots), 0, 8);
+      r.syncBots(s.bots);           // bots appear/disappear in the lobby list
+    }
     if (patch.map) s.map = patch.map;
     if (patch.mode) s.mode = patch.mode;
     if (typeof patch.whistle === 'boolean') s.whistle = patch.whistle;
@@ -206,10 +248,10 @@ io.on('connection', (socket) => {
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
     const n = r.activePlayers().length;
     if (n < 1) return; // min 1 for easier testing
-    // Everyone gets a seeker turn: with N players and K seekers per round a
-    // full cycle is ceil(N/K) rounds, so the game runs at least that long
-    // (4 players, 1 seeker -> minimum 4 rounds).
-    const cycle = Math.ceil(n / Math.max(1, r.seekerCount()));
+    // Every HUMAN gets a seeker turn: with H humans and K seekers per round a
+    // full cycle is ceil(H/K) rounds, so the game runs at least that long
+    // (4 players, 1 seeker -> minimum 4 rounds). Bots never seek.
+    const cycle = Math.ceil(r.humans().length / Math.max(1, r.seekerCount()));
     r.totalRounds = Math.max(r.settings.rounds, cycle);
     r.seekerQueue = []; // fresh rotation each game
     startRound(r);
@@ -272,16 +314,16 @@ io.on('connection', (socket) => {
   });
 
   // Seeker fires a paint blast at a world point. Splatters paint (visible to
-  // everyone), catches any hider within the blast radius, and reloads for 1s.
-  // Meccha Chameleon's key balance rule: a MISSED shot costs the seeker
-  // health — run dry and you're eliminated. No spam-shooting every blob.
+  // everyone), catches any hider within the blast radius. Shots are FREE —
+  // the balance lever is the reload: every shot (hit or miss) locks the gun
+  // for RELOAD_MS, so spraying every blob wastes precious hunt time.
   socket.on('shoot', (data) => {
     const r = room();
     const p = me();
-    if (!r || !p || p.role !== 'seeker' || p.out || r.phase !== 'hunt' || !data) return;
+    if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt' || !data) return;
     if (typeof data.x !== 'number' || typeof data.z !== 'number') return;
     const now = Date.now();
-    if (now - (p.lastShot || 0) < 1000) return; // 1s reload — no spam
+    if (now - (p.lastShot || 0) < RELOAD_MS - 150) return; // small grace for latency
     p.lastShot = now;
     const color = (typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color)) ? data.color : '#ff3bd0';
     const y = typeof data.y === 'number' ? data.y : 0.5;
@@ -299,26 +341,18 @@ io.on('connection', (socket) => {
       const msLeft = Math.max(0, r.deadline - now);
       p.score += 60 + Math.round((msLeft / huntMs) * 40);
       hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
-      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; hit.hp = SEEKER_HP; }
+      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
       io.to(r.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
       broadcast(r);
       maybeEndEarly(r);
     } else {
-      p.hp = Math.max(0, (p.hp == null ? SEEKER_HP : p.hp) - 1);
-      io.to(socket.id).emit('miss', { hp: p.hp });
-      if (p.hp <= 0) {
-        p.out = true;
-        io.to(r.code).emit('seekerout', { id: p.id, name: p.name });
-        broadcast(r);
-        maybeEndEarly(r);
-      } else {
-        broadcast(r);
-      }
+      io.to(socket.id).emit('miss', {});
     }
   });
 
   // Hider whistles on purpose (taunt) — betrays them now, but resets the 45s
-  // auto-whistle countdown, buying silence for when the seeker is close.
+  // auto-whistle countdown AND earns bonus points (bravery pays). The bonus
+  // is rate-limited so it can't be farmed by spamming.
   socket.on('whistle', () => {
     const r = room();
     const p = me();
@@ -327,7 +361,14 @@ io.on('connection', (socket) => {
     if (now - (p.lastWhistle || 0) < 2000) return;
     p.lastWhistle = now;
     p.nextWhistle = now + WHISTLE_EVERY;
-    io.to(r.code).emit('whistle', { id: p.id, x: p.body.x, y: p.body.y || 0, z: p.body.z, auto: false });
+    let bonus = 0;
+    if (now - (p.lastWhistleBonus || 0) >= 15000) {
+      p.lastWhistleBonus = now;
+      bonus = 10;
+      p.score += bonus;
+      scheduleBroadcast(r);
+    }
+    io.to(r.code).emit('whistle', { id: p.id, x: p.body.x, y: p.body.y || 0, z: p.body.z, auto: false, bonus });
   });
 
   // Seeker reports its position (for spectators' minimaps). Privacy is handled
@@ -371,7 +412,8 @@ io.on('connection', (socket) => {
     if (!r) return;
     const leaver = r.players.get(socket.id);
     r.removePlayer(socket.id);
-    if (r.players.size === 0) {
+    if (r.humans().length === 0) {   // only bots (or nobody) left — close it
+      stopBots(r);
       store.delete(r.code);
     } else {
       // Tell everyone who left, then re-check whether the round can even
