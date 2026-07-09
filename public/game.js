@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=29';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=31';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -2934,6 +2934,12 @@ window.__tp = (x, z) => {
 };
 window.__look = (yaw) => { cam.yaw = yaw; if (myBody) myBody.ry = yaw; };
 window.__shoot = (x, z) => socket.emit('shoot', { x, y: 0.5, z, color: '#ff3bd0' });
+// Highest collision surface (wall/furniture top) under (x,z) — probe from high up.
+window.__top = (x, z) => {
+  _ro.set(x, 30, z); _rd.set(0, -1, 0); _rc.set(_ro, _rd); _rc.far = 60;
+  const h = _rc.intersectObjects(collisionMeshes, true)[0];
+  return h ? +h.point.y.toFixed(2) : null;
+};
 window.__state = () => ({
   body: myBody && { x: +myBody.x.toFixed(2), y: +(myBody.y || 0).toFixed(2), z: +myBody.z.toFixed(2), pose: myBody.pose },
   climbing, joy: joyVec, near: nearSurface,

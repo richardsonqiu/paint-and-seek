@@ -77,7 +77,9 @@ export const MAPS = {
     // Solid walls on the cut lines — the flat honestly ENDS here. The west
     // cut sits behind the living-room sofa (sofa west end ~-5.9) so the
     // whole couch is inside the room, backed naturally against the wall.
-    capWalls: [{ x: -6.3, len: 14 }, { x: 7.8, len: 14 }],
+    // h matches the flat's own walls (~2.5m) so they don't stick up, and the
+    // 2.2m roof stops a climber below the top (no scaling the boundary).
+    capWalls: [{ x: -6.3, len: 14, h: 2.6 }, { x: 7.8, len: 14, h: 2.6 }],
     // Play area stops at the cap walls' inner faces so nobody can stand
     // inside a wall slab and poke the camera through it.
     bounds: { minX: -6.0, maxX: 7.4, minZ: -6.5, maxZ: 6.5 },
