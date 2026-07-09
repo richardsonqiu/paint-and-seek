@@ -61,6 +61,10 @@ export const MAPS = {
     ground: '#8c9498',
     sky: '#cfe2f1',
     fog: { color: '#dcebf4', near: 30, far: 95 },
+    // Vertical ceiling: interior walls are ~2.6m, so cap climbing at 2.2m —
+    // high enough for the picture-frame wall-hide, low enough that you can
+    // never crest a wall-top and drop into the next room.
+    roof: 2.2,
     scenes: [
       // The cut lines sit ON the floorplan's real interior walls (measured
       // top-down: x = -5.5 and +7.8), so every room in play is COMPLETE —
