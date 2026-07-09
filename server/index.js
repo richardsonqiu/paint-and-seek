@@ -104,6 +104,95 @@ function startBotHiding(room) {
 }
 function stopBots(room) {
   if (room._botTick) { clearInterval(room._botTick); room._botTick = null; }
+  if (room._botHunt) { clearInterval(room._botHunt); room._botHunt = null; }
+}
+
+// Clamp a point to the map's playable bounds (falls back to the full size).
+function clampPlay(map, x, z) {
+  const b = map.bounds;
+  if (!b) return clampToRoom(map, x, z);
+  return [Math.max(b.minX, Math.min(b.maxX, x)), Math.max(b.minZ, Math.min(b.maxZ, z))];
+}
+
+// ---- Bot seeker AI -------------------------------------------------------
+// Bots take seeker turns so humans get to HIDE even in tiny lobbies. The AI
+// is deliberately simple and beatable: patrol the spawn spots, run toward
+// whistles, and only "see" a hider within a short radius. Same reload rules
+// as humans.
+const BOT_SIGHT = 2.4;      // metres — must nearly stumble over you
+const BOT_SHOOT = 1.25;     // fire when this close (blast radius is 1.4)
+function startBotSeekers(room) {
+  const botSeekers = room.activePlayers().filter((p) => p.isBot && p.role === 'seeker');
+  if (!botSeekers.length) return;
+  const pts = spawnPoints(room.map);
+  for (const b of botSeekers) { b.botTarget = null; b.lastShot = Date.now(); }
+  room._botHunt = setInterval(() => {
+    if (room.phase !== 'hunt') { stopBots(room); return; }
+    const now = Date.now();
+    let moved = false;
+    for (const b of room.activePlayers()) {
+      if (!b.isBot || b.role !== 'seeker') continue;
+      // Sense: the nearest still-hidden hider inside sight range.
+      let prey = null, pd = BOT_SIGHT;
+      for (const h of room.remainingHiders()) {
+        const d = Math.hypot(h.body.x - b.body.x, h.body.z - b.body.z);
+        if (d < pd) { pd = d; prey = h; }
+      }
+      if (prey && pd <= BOT_SHOOT && now - (b.lastShot || 0) >= RELOAD_MS) {
+        b.lastShot = now;
+        botShoot(room, b, prey);
+        continue;
+      }
+      // Steer: chase prey, else head for the current patrol point (a heard
+      // whistle overrides it — see alertBotSeekers).
+      let tx, tz;
+      if (prey) { tx = prey.body.x; tz = prey.body.z; }
+      else {
+        if (!b.botTarget ||
+            Math.hypot(b.botTarget.x - b.body.x, b.botTarget.z - b.body.z) < 0.6) {
+          const t = pts[Math.floor(Math.random() * pts.length)];
+          const [px, pz] = clampPlay(room.map, t[0] + (Math.random() * 3 - 1.5), t[2] + (Math.random() * 3 - 1.5));
+          b.botTarget = { x: px, z: pz };
+        }
+        tx = b.botTarget.x; tz = b.botTarget.z;
+      }
+      const dx = tx - b.body.x, dz = tz - b.body.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.05) {
+        const step = Math.min(d, 2.4 * 0.25);      // ~2.4 m/s at 250ms ticks
+        b.body.x += (dx / d) * step;
+        b.body.z += (dz / d) * step;
+        b.body.ry = Math.atan2(dx, dz);
+        moved = true;
+      }
+    }
+    if (moved) scheduleBroadcast(room);
+  }, 250);
+}
+
+// A whistle rings out: every bot seeker beelines for the sound.
+function alertBotSeekers(room, x, z) {
+  for (const b of room.activePlayers()) {
+    if (b.isBot && b.role === 'seeker') {
+      const [px, pz] = clampPlay(room.map, x, z);
+      b.botTarget = { x: px, z: pz };
+    }
+  }
+}
+
+// Bot pulls the trigger point-blank — same blast/score/broadcast as a
+// human 'shoot' hit.
+function botShoot(room, p, hit) {
+  io.to(room.code).emit('blast', { x: hit.body.x, y: 0.5, z: hit.body.z, color: '#ff3bd0' });
+  hit.found = true;
+  const huntMs = room.huntMs || room.settings.huntTime * 1000;
+  const msLeft = Math.max(0, room.deadline - Date.now());
+  p.score += 60 + Math.round((msLeft / huntMs) * 40);
+  hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
+  if (room.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
+  io.to(room.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
+  broadcast(room);
+  maybeEndEarly(room);
 }
 
 function enterHunt(room) {
@@ -123,6 +212,7 @@ function enterHunt(room) {
   }
   startPump(room);
   broadcast(room);
+  startBotSeekers(room);
   room._timer = setTimeout(() => endRound(room, 'time'), room.huntMs);
 }
 
@@ -133,6 +223,7 @@ function tickWhistles(room) {
     if (now >= h.nextWhistle) {
       h.nextWhistle = now + WHISTLE_EVERY;
       io.to(room.code).emit('whistle', { id: h.id, x: h.body.x, y: h.body.y || 0, z: h.body.z, auto: true });
+      alertBotSeekers(room, h.body.x, h.body.z);
     }
   }
 }
@@ -140,6 +231,7 @@ function tickWhistles(room) {
 function endRound(room, reason) {
   clearTimer(room);
   if (room._whistler) { clearInterval(room._whistler); room._whistler = null; }
+  stopBots(room);
   stopPump(room);
   room.phase = 'roundover';
 
@@ -248,10 +340,10 @@ io.on('connection', (socket) => {
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
     const n = r.activePlayers().length;
     if (n < 1) return; // min 1 for easier testing
-    // Every HUMAN gets a seeker turn: with H humans and K seekers per round a
-    // full cycle is ceil(H/K) rounds, so the game runs at least that long
-    // (4 players, 1 seeker -> minimum 4 rounds). Bots never seek.
-    const cycle = Math.ceil(r.humans().length / Math.max(1, r.seekerCount()));
+    // Everyone (bots included) gets a seeker turn: with N players and K
+    // seekers per round a full cycle is ceil(N/K) rounds, so the game runs
+    // at least that long (4 players, 1 seeker -> minimum 4 rounds).
+    const cycle = Math.ceil(n / Math.max(1, r.seekerCount()));
     r.totalRounds = Math.max(r.settings.rounds, cycle);
     r.seekerQueue = [];          // fresh rotation each game
     r.lastSeekerIds = new Set(); // no carry-over "no repeat" debt from last game
@@ -370,6 +462,7 @@ io.on('connection', (socket) => {
       scheduleBroadcast(r);
     }
     io.to(r.code).emit('whistle', { id: p.id, x: p.body.x, y: p.body.y || 0, z: p.body.z, auto: false, bonus });
+    alertBotSeekers(r, p.body.x, p.body.z);
   });
 
   // Seeker reports its position (for spectators' minimaps). Privacy is handled

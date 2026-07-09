@@ -125,13 +125,13 @@ export class Room {
     return this.seekers().filter((p) => !p.out);
   }
 
-  // Seekers per round: the host's setting, but only HUMANS ever seek (bots
-  // can't hunt) and at least 1 hider is always left over, so a solo host
-  // with no bots gets a 0-seeker practice round.
+  // Seekers per round: the host's setting, clamped so at least 1 hider is
+  // always left over (a solo host with no bots gets a 0-seeker practice
+  // round). Bots take seeker turns too — a simple hunt AI drives them — so
+  // playing with bots still rotates YOU through hiding rounds.
   seekerCount() {
     const n = this.activePlayers().length;
-    const h = this.humans().length;
-    return Math.min(Math.max(1, this.settings.seekers || 1), h, Math.max(0, n - 1));
+    return Math.min(Math.max(1, this.settings.seekers || 1), Math.max(0, n - 1));
   }
 
   // Round-robin rotation with two guarantees:
@@ -164,7 +164,7 @@ export class Room {
 
   assignRoles() {
     const players = this.activePlayers();
-    const seekerIds = this.drawSeekers(this.humans(), this.seekerCount());
+    const seekerIds = this.drawSeekers(players, this.seekerCount());
     // Put seekers in one room and hiders in the other rooms, at random spots,
     // so a hider never spawns right next to a seeker.
     const rooms = roomSpawns(this.map);

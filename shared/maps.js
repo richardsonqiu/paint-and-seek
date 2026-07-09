@@ -66,8 +66,11 @@ export const MAPS = {
     scenes: [
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true },
     ],
-    // Confine play to the flat (no wandering the empty void).
-    bounds: { minX: -17, maxX: 17, minZ: -6.5, maxZ: 6.5 },
+    // Play is fenced to the CENTRAL ~20m of the flat (cut lines sit on real
+    // walls): one west bedroom, living/dining, kitchen and the east suite.
+    // The far wings were 4 more near-identical beige bedrooms — too many
+    // same-looking rooms for a seeker to sweep in the time-bound.
+    bounds: { minX: -10.5, maxX: 9.5, minZ: -6.5, maxZ: 6.5 },
     // Spawn points grouped by area (scaled 34/42 with the scene). Each round
     // the seeker and the hiders are placed in DIFFERENT areas so a hider
     // never starts next to the seeker. Spots are all in HALLS / open areas —
@@ -76,7 +79,7 @@ export const MAPS = {
     spawnRooms: [
       [[-9.7, 0], [-6.5, -1.6], [-8.1, 2.4], [-4.9, 1.6]],      // west hall & lounge
       [[0, -2.4], [0, 2.4], [-3.2, 0], [3.2, 0]],               // living / dining
-      [[9.7, 0], [6.5, -1.6], [8.1, 2.4], [4.9, -4]],           // east hall & kitchen
+      [[8.8, 0], [6.5, -1.6], [8.1, 2.4], [4.9, -4]],           // east hall & kitchen
     ],
   },
 
