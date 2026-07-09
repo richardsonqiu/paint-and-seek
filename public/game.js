@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=31';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=32';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1630,18 +1630,21 @@ function applyMovement(dt) {
 
   if (hiderControls()) {
     const p = myBody; p.vy = p.vy || 0;
+    // Move speed scales with the character (bigger toys on bigger maps stride
+    // proportionally), so a large character never crawls across a big map.
+    const HSPD = HIDER_MOVE_SPEED * charScale();
     const HRAD = 0.16 * charScale(), RAYY = (p.y || 0) + 0.1;
     if (climbing) {
       // On the wall: up/down climbs, left/right sidles along the surface.
       // Screen-right while the camera faces the wall (along climbDir) is
       // climbDir × up = (-dz, dx).
       const up = joyVec.y, side = joyVec.x;
-      if (up > 0) { const ny = (p.y || 0) + up * HIDER_MOVE_SPEED * dt; if (ny <= roofY()) p.y = ny; }
-      else if (up < 0) { p.y = Math.max(0, (p.y || 0) + up * HIDER_MOVE_SPEED * dt); }
+      if (up > 0) { const ny = (p.y || 0) + up * HSPD * dt; if (ny <= roofY()) p.y = ny; }
+      else if (up < 0) { p.y = Math.max(0, (p.y || 0) + up * HSPD * dt); }
       if (side) {
         const px = -climbDir.z, pz = climbDir.x;
-        let nx = clamp(p.x + px * side * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + pz * side * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        let nx = clamp(p.x + px * side * HSPD * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + pz * side * HSPD * dt, b.minZ, b.maxZ);
         [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, HRAD);
         p.x = nx; p.z = nz;
       }
@@ -1679,8 +1682,8 @@ function applyMovement(dt) {
       if (mv) {
         p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
         followBehind(p.ry, dt);        // moving: camera swings back behind you
-        let nx = clamp(p.x + mv.x * mv.mag * HIDER_MOVE_SPEED * dt, b.minX, b.maxX);
-        let nz = clamp(p.z + mv.z * mv.mag * HIDER_MOVE_SPEED * dt, b.minZ, b.maxZ);
+        let nx = clamp(p.x + mv.x * mv.mag * HSPD * dt, b.minX, b.maxX);
+        let nz = clamp(p.z + mv.z * mv.mag * HSPD * dt, b.minZ, b.maxZ);
         [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
         // Stay on the building floor, and never crawl under furniture.
         const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
@@ -1714,7 +1717,7 @@ function applyMovement(dt) {
     // FPS: the body always faces where the camera looks (the gun IS the aim).
     p.ry = cam.yaw;
     if (mv) {
-      const spd = seekerPeek ? MOVE_SPEED * 0.45 : MOVE_SPEED;  // creep while peeking
+      const spd = (seekerPeek ? MOVE_SPEED * 0.45 : MOVE_SPEED) * charScale();  // creep while peeking; scales with size
       let nx = clamp(p.x + mv.x * mv.mag * spd * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * mv.mag * spd * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 0.5);
@@ -1741,8 +1744,8 @@ function applyMovement(dt) {
     if (mv) {
       p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
       followBehind(p.ry, dt);          // moving: camera swings back behind you
-      let nx = clamp(p.x + mv.x * HIDER_MOVE_SPEED * 1.6 * dt, b.minX, b.maxX);
-      let nz = clamp(p.z + mv.z * HIDER_MOVE_SPEED * 1.6 * dt, b.minZ, b.maxZ);
+      let nx = clamp(p.x + mv.x * HIDER_MOVE_SPEED * 1.6 * charScale() * dt, b.minX, b.maxX);
+      let nz = clamp(p.z + mv.z * HIDER_MOVE_SPEED * 1.6 * charScale() * dt, b.minZ, b.maxZ);
       [nx, nz] = slideMove(p.x, p.z, nx, nz, (p.y || 0) + 0.12, 0.16);
       if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; }
     }

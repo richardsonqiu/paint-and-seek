@@ -101,7 +101,9 @@ export const MAPS = {
     name: 'The Plaza',
     // Shrunk ~17% (fit 46 -> 38): tighter sweep for the seeker outdoors.
     size: { x: 44, z: 44, h: 14 },
-    charScale: 1.4,    // open-air square: bigger bodies so they read outdoors
+    // Bigger toys (was 1.4) so a 34m square plays close to The Flat's
+    // findability; movement scales with charScale so they don't crawl.
+    charScale: 2.0,
     ground: '#8fae74',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 38, far: 118 },
@@ -129,7 +131,10 @@ export const MAPS = {
     // Shrunk 25% (everything ×0.75): the old 160m sprawl took too long to
     // cross — districts keep their layout, just packed tighter.
     size: { x: 120, z: 120, h: 40 },
-    charScale: 2,      // huge districts: characters scale up to match streets
+    // The big map — kept larger on purpose, but charScale 3.2 (was 2) plus
+    // charScale-scaled movement cut the central cross-time from ~35s to ~11s.
+    // Bounds stay ±50 so the outer buildings aren't sliced by an edge.
+    charScale: 3.2,
     ground: '#9fb08a',
     sky: '#bcd6ea',
     fog: { color: '#cfe0ec', near: 55, far: 175 },
@@ -158,7 +163,9 @@ export const MAPS = {
     id: 'grounds',
     name: 'The Grounds',
     size: { x: 54, z: 54, h: 10 },
-    charScale: 1.3,    // Kenney props are people-sized; lift the doodlers a bit
+    // Bigger toys (was 1.3) so the 54m compound plays close to The Flat's
+    // findability; charScale-scaled movement keeps them from crawling.
+    charScale: 2.3,
     ground: '#6fa84e',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 34, far: 88 },
