@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=21';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=22';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -310,7 +310,7 @@ function loadModel(kit, name) { return loadModelByUrl(modelUrl(kit, name), true)
 // under /models. These come at wildly different scales/origins, so we auto-fit
 // (scale so the footprint's longest side == `fit`), centre it on (x,z) and drop
 // its base to the ground.
-async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 30, yOff = 0, solid = false, collide = false } = {}) {
+async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 30, yOff = 0, solid = false, collide = false, trim = null } = {}) {
   let proto = null;
   // Scene GLBs are high-poly + baked-lit, so skip them in the shadow pass (big
   // FPS win). Retry a couple of times — one dropped fetch must not leave a
@@ -348,11 +348,41 @@ async function placeScene(group, file, { x = 0, z = 0, rot = 0, rotX = 0, fit = 
     const b = new THREE.Box3().setFromObject(inst);
     collisionBoxes.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z });
   }
+  // Trim: genuinely REMOVE geometry outside the given world-x/z window
+  // (e.g. The Flat plays only in its central rooms — the fenced-off wings
+  // shouldn't exist at all). Meshes fully outside are dropped; meshes that
+  // straddle the cut get GPU clipping planes so the building visibly ENDS
+  // at the cut instead of showing ghost rooms behind an invisible wall.
+  let clipPlanes = null;
+  if (trim) {
+    clipPlanes = [];
+    if (trim.minX != null) clipPlanes.push(new THREE.Plane(new THREE.Vector3(1, 0, 0), -trim.minX));
+    if (trim.maxX != null) clipPlanes.push(new THREE.Plane(new THREE.Vector3(-1, 0, 0), trim.maxX));
+    if (trim.minZ != null) clipPlanes.push(new THREE.Plane(new THREE.Vector3(0, 0, 1), -trim.minZ));
+    if (trim.maxZ != null) clipPlanes.push(new THREE.Plane(new THREE.Vector3(0, 0, -1), trim.maxZ));
+    renderer.localClippingEnabled = true;
+  }
+  const _mb = new THREE.Box3();
+  const outsideTrim = (o) => {
+    if (!trim) return false;
+    _mb.setFromObject(o);
+    return (trim.minX != null && _mb.max.x < trim.minX) ||
+           (trim.maxX != null && _mb.min.x > trim.maxX) ||
+           (trim.minZ != null && _mb.max.z < trim.minZ) ||
+           (trim.maxZ != null && _mb.min.z > trim.maxZ);
+  };
   // Per-mesh collision — but glass partitions / curtains are pass-through and
   // closed doors are removed outright, so you can move freely between rooms.
   inst.traverse((o) => {
     if (!o.isMesh) return;
     if (REMOVE.test(o.name)) { o.visible = false; return; }
+    if (outsideTrim(o)) { o.visible = false; return; }   // trimmed away entirely
+    if (clipPlanes) {
+      // Materials are shared with other instances of this GLB (Mega City
+      // reuses the same protos) — clone before clipping.
+      const clip = (m) => { const c = m.clone(); c.clippingPlanes = clipPlanes; return c; };
+      o.material = Array.isArray(o.material) ? o.material.map(clip) : clip(o.material);
+    }
     if (collide && !PASSTHROUGH.test(o.name)) {
       try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
       collisionMeshes.push(o);
@@ -542,6 +572,7 @@ function buildScene(mapId) {
     placeScene(g, sc.file, {
       x: sc.pos[0], z: sc.pos[1], rot: sc.rot || 0, rotX: sc.rotX || 0,
       fit: sc.fit || 30, yOff: sc.y || 0, solid: !!sc.solid, collide: sc.collide !== false,
+      trim: sc.trim || null,
     });
   }
   for (const c of (map.connectors || [])) buildConnector(g, c);

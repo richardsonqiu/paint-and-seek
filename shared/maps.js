@@ -64,12 +64,15 @@ export const MAPS = {
     sky: '#cfe2f1',
     fog: { color: '#dcebf4', near: 38, far: 110 },
     scenes: [
-      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true },
+      // trim: the far wings (4 near-identical beige bedrooms) are REMOVED
+      // from the model — fully-outside meshes dropped, straddling ones GPU-
+      // clipped — so the flat genuinely ends at the play area. The trim sits
+      // ~0.8m outside the bounds so the boundary wall itself survives and
+      // rooms still end in a real wall, not a see-through cut.
+      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true,
+        trim: { minX: -11.3, maxX: 10.3 } },
     ],
-    // Play is fenced to the CENTRAL ~20m of the flat (cut lines sit on real
-    // walls): one west bedroom, living/dining, kitchen and the east suite.
-    // The far wings were 4 more near-identical beige bedrooms — too many
-    // same-looking rooms for a seeker to sweep in the time-bound.
+    // Play area: one west bedroom, living/dining, kitchen and the east suite.
     bounds: { minX: -10.5, maxX: 9.5, minZ: -6.5, maxZ: 6.5 },
     // Spawn points grouped by area (scaled 34/42 with the scene). Each round
     // the seeker and the hiders are placed in DIFFERENT areas so a hider
