@@ -108,9 +108,20 @@ export const MAPS = {
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 38, far: 118 },
     scenes: [
+      // No trim: the scene only pokes ~1.7m past the boundary walls, and the
+      // 10.5m walls hide it — clipping the hilly terrain exposed ugly hollow
+      // cross-sections instead.
       { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 38, collide: true },
     ],
     roof: 10,          // the plaza sits on a hill — allow real altitude
+    // Full enclosure: solid walls on all four sides, TALLER than the roof
+    // cap so nobody can climb over the boundary.
+    capWalls: [
+      { x: -17.25, len: 35.2, h: 10.5, color: '#a9b99c' },
+      { x: 17.25, len: 35.2, h: 10.5, color: '#a9b99c' },
+      { z: -17.25, len: 35.2, h: 10.5, color: '#a9b99c' },
+      { z: 17.25, len: 35.2, h: 10.5, color: '#a9b99c' },
+    ],
     bounds: { minX: -17, maxX: 17, minZ: -17, maxZ: 17 },
     // Spawns probed in-game (scaled 38/46 with the scene): each settles on
     // walkable ground with room to move.
@@ -140,7 +151,17 @@ export const MAPS = {
     fog: { color: '#cfe0ec', near: 55, far: 175 },
     groundWalk: true,  // streets between buildings are the play surface
     roof: 12,          // buildings are tall — allow climbing their lower tiers
-    bounds: { minX: -50, maxX: 50, minZ: -50, maxZ: 50 },
+    // Full enclosure: city walls on all four sides. Placed at ±58 so every
+    // district fits whole inside (the outer blocks reach ~±57 — walls at
+    // the old ±50 bounds would slice them), and TALLER than the 12m roof
+    // so the boundary can't be climbed over.
+    capWalls: [
+      { x: -58.3, len: 117.5, h: 13, color: '#c2c4bd' },
+      { x: 58.3, len: 117.5, h: 13, color: '#c2c4bd' },
+      { z: -58.3, len: 117.5, h: 13, color: '#c2c4bd' },
+      { z: 58.3, len: 117.5, h: 13, color: '#c2c4bd' },
+    ],
+    bounds: { minX: -58, maxX: 58, minZ: -58, maxZ: 58 },
     scenes: [
       { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 39 },          // sports plaza (centre)
       { file: 'apartamento.glb', pos: [-37.5, -37.5], fit: 27 },                    // apartment block
