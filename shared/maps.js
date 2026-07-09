@@ -56,39 +56,32 @@ export const MAPS = {
   rooms: {
     id: 'rooms',
     name: 'The Flat',
-    // Shrunk ~20% (fit 42 -> 34): the full-size flat was too much ground for
-    // the seeker to sweep within the time-bound. Everything scales with it.
-    size: { x: 40, z: 20, h: 12 },
+    size: { x: 30, z: 20, h: 12 },
     charScale: 1,      // reference map — hider/seeker sizes are tuned here
     ground: '#8c9498',
     sky: '#cfe2f1',
-    fog: { color: '#dcebf4', near: 38, far: 110 },
+    fog: { color: '#dcebf4', near: 30, far: 95 },
     scenes: [
-      // trim: the far wings (4 near-identical beige bedrooms) are REMOVED
-      // from the model — fully-outside meshes dropped, straddling ones GPU-
-      // clipped right at the play edge. capWalls below seal the cuts with
-      // solid plaster walls, so no half-sliced furniture peeks through.
-      // The trim planes sit INSIDE the cap wall slabs (walls at ±10.5/9.5,
-      // faces at ±10.325/9.325), so every sliced cross-section — sofas! —
-      // is swallowed by the wall instead of poking out of it.
+      // The cut lines sit ON the floorplan's real interior walls (measured
+      // top-down: x = -5.5 and +7.8), so every room in play is COMPLETE —
+      // living/dining, kitchen, and the whole east suite. The half-sliced
+      // west bathroom/bedrooms are excluded entirely. Trim planes sit
+      // INSIDE the cap wall slabs so sliced cross-sections never peek out.
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true,
-        trim: { minX: -10.4, maxX: 9.4 } },
+        trim: { minX: -5.6, maxX: 7.9 } },
     ],
     // Solid walls on the cut lines — the flat honestly ENDS here.
-    capWalls: [{ x: -10.5, len: 14 }, { x: 9.5, len: 14 }],
-    // Play area: one west bedroom, living/dining, kitchen and the east suite.
-    // Stops at the cap walls' INNER faces (walls at ±10.5/9.5, 0.35 thick),
-    // so nobody can stand inside the wall slab and poke the camera through.
-    bounds: { minX: -10.1, maxX: 9.1, minZ: -6.5, maxZ: 6.5 },
-    // Spawn points grouped by area (scaled 34/42 with the scene). Each round
-    // the seeker and the hiders are placed in DIFFERENT areas so a hider
-    // never starts next to the seeker. Spots are all in HALLS / open areas —
-    // never inside the narrow-doored bedrooms (players can walk in to hide,
-    // but nobody starts boxed in).
+    capWalls: [{ x: -5.5, len: 14 }, { x: 7.8, len: 14 }],
+    // Play area stops at the cap walls' inner faces so nobody can stand
+    // inside a wall slab and poke the camera through it.
+    bounds: { minX: -5.1, maxX: 7.4, minZ: -6.5, maxZ: 6.5 },
+    // Spawn points grouped by area. Each round the seeker and the hiders are
+    // placed in DIFFERENT areas so a hider never starts next to the seeker.
+    // Spots are in open floor — never boxed into the narrow-doored rooms.
     spawnRooms: [
-      [[-9.7, 0], [-6.5, -1.6], [-8.1, 2.4], [-4.9, 1.6]],      // west hall & lounge
-      [[0, -2.4], [0, 2.4], [-3.2, 0], [3.2, 0]],               // living / dining
-      [[8.8, 0], [6.5, -1.6], [8.1, 2.4], [4.9, -4]],           // east hall & kitchen
+      [[-3, 0.8], [-4.4, 0], [-1.5, -3.5], [-2, 2.5]],          // lounge & dining
+      [[0.6, -2.2], [1.7, 0.8], [2.5, -3], [1.2, 3]],           // kitchen & hall
+      [[5.6, 1.6], [4.5, -0.7], [4.5, -4.4], [6.5, -2]],        // east suite
     ],
   },
 
