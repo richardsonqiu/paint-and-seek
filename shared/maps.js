@@ -56,24 +56,27 @@ export const MAPS = {
   rooms: {
     id: 'rooms',
     name: 'The Flat',
-    size: { x: 48, z: 24, h: 12 },
+    // Shrunk ~20% (fit 42 -> 34): the full-size flat was too much ground for
+    // the seeker to sweep within the time-bound. Everything scales with it.
+    size: { x: 40, z: 20, h: 12 },
     charScale: 1,      // reference map — hider/seeker sizes are tuned here
     ground: '#8c9498',
     sky: '#cfe2f1',
-    fog: { color: '#dcebf4', near: 45, far: 130 },
+    fog: { color: '#dcebf4', near: 38, far: 110 },
     scenes: [
-      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 42, collide: true },
+      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true },
     ],
     // Confine play to the flat (no wandering the empty void).
-    bounds: { minX: -21, maxX: 21, minZ: -8, maxZ: 8 },
-    // Spawn points grouped by area. Each round the seeker and the hiders are
-    // placed in DIFFERENT areas so a hider never starts next to the seeker.
-    // Spots are all in HALLS / open areas — never inside the narrow-doored
-    // bedrooms (players can walk in to hide, but nobody starts boxed in).
+    bounds: { minX: -17, maxX: 17, minZ: -6.5, maxZ: 6.5 },
+    // Spawn points grouped by area (scaled 34/42 with the scene). Each round
+    // the seeker and the hiders are placed in DIFFERENT areas so a hider
+    // never starts next to the seeker. Spots are all in HALLS / open areas —
+    // never inside the narrow-doored bedrooms (players can walk in to hide,
+    // but nobody starts boxed in).
     spawnRooms: [
-      [[-12, 0], [-8, -2], [-10, 3], [-6, 2]],                  // west hall & lounge
-      [[0, -3], [0, 3], [-4, 0], [4, 0]],                       // living / dining
-      [[12, 0], [8, -2], [10, 3], [6, -5]],                     // east hall & kitchen
+      [[-9.7, 0], [-6.5, -1.6], [-8.1, 2.4], [-4.9, 1.6]],      // west hall & lounge
+      [[0, -2.4], [0, 2.4], [-3.2, 0], [3.2, 0]],               // living / dining
+      [[9.7, 0], [6.5, -1.6], [8.1, 2.4], [4.9, -4]],           // east hall & kitchen
     ],
   },
 
@@ -83,21 +86,23 @@ export const MAPS = {
   plaza: {
     id: 'plaza',
     name: 'The Plaza',
-    size: { x: 52, z: 52, h: 14 },
+    // Shrunk ~17% (fit 46 -> 38): tighter sweep for the seeker outdoors.
+    size: { x: 44, z: 44, h: 14 },
     charScale: 1.4,    // open-air square: bigger bodies so they read outdoors
     ground: '#8fae74',
     sky: '#aed8f0',
-    fog: { color: '#cfe7f5', near: 45, far: 140 },
+    fog: { color: '#cfe7f5', near: 38, far: 118 },
     scenes: [
-      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 46, collide: true },
+      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 38, collide: true },
     ],
     roof: 10,          // the plaza sits on a hill — allow real altitude
-    bounds: { minX: -21, maxX: 21, minZ: -21, maxZ: 21 },
-    // Spawns probed in-game: each settles on walkable ground with room to move.
+    bounds: { minX: -17, maxX: 17, minZ: -17, maxZ: 17 },
+    // Spawns probed in-game (scaled 38/46 with the scene): each settles on
+    // walkable ground with room to move.
     spawnRooms: [
-      [[-8, 0], [-10, -4], [-4, -6]],           // west terrace & lawn
-      [[0, -8], [0, 3], [6, -6]],               // central paths
-      [[8, 0], [4, 6], [12, 8]],                // east court side
+      [[-6.6, 0], [-8.3, -3.3], [-3.3, -5]],    // west terrace & lawn
+      [[0, -6.6], [0, 2.5], [5, -5]],           // central paths
+      [[6.6, 0], [3.3, 5], [9.9, 6.6]],         // east court side
     ],
   },
 
@@ -108,29 +113,31 @@ export const MAPS = {
   city: {
     id: 'city',
     name: 'Mega City',
-    size: { x: 160, z: 160, h: 40 },
+    // Shrunk 25% (everything ×0.75): the old 160m sprawl took too long to
+    // cross — districts keep their layout, just packed tighter.
+    size: { x: 120, z: 120, h: 40 },
     charScale: 2,      // huge districts: characters scale up to match streets
     ground: '#9fb08a',
     sky: '#bcd6ea',
-    fog: { color: '#cfe0ec', near: 70, far: 230 },
+    fog: { color: '#cfe0ec', near: 55, far: 175 },
     groundWalk: true,  // streets between buildings are the play surface
     roof: 12,          // buildings are tall — allow climbing their lower tiers
-    bounds: { minX: -66, maxX: 66, minZ: -66, maxZ: 66 },
+    bounds: { minX: -50, maxX: 50, minZ: -50, maxZ: 50 },
     scenes: [
-      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 52 },        // sports plaza (centre)
-      { file: 'apartamento.glb', pos: [-50, -50], fit: 36 },                      // apartment block
-      { file: 'ice_scream_3_shopping_center_map.glb', pos: [0, -54], fit: 44 },   // shopping centre
-      { file: 'sanzio_predio_humanizada.glb', pos: [52, -50], fit: 36 },          // tower building
-      { file: 'unimed_loja_de_vendas.glb', pos: [-54, 4], fit: 36 },             // store
-      { file: 'the-picture-gallery-low-poly-vr/source/Untitled.glb', pos: [54, 6], fit: 26 }, // gallery
-      { file: 'apartment-floor-plan/source/apartment.glb', pos: [-50, 52], fit: 30 },         // apartment (rooms)
-      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 54], fit: 34 },       // floor plan (rooms)
-      { file: 'appartement/source/appartement.glb', pos: [52, 52], fit: 26 },                 // apartment (rooms)
+      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 39 },          // sports plaza (centre)
+      { file: 'apartamento.glb', pos: [-37.5, -37.5], fit: 27 },                    // apartment block
+      { file: 'ice_scream_3_shopping_center_map.glb', pos: [0, -40.5], fit: 33 },   // shopping centre
+      { file: 'sanzio_predio_humanizada.glb', pos: [39, -37.5], fit: 27 },          // tower building
+      { file: 'unimed_loja_de_vendas.glb', pos: [-40.5, 3], fit: 27 },             // store
+      { file: 'the-picture-gallery-low-poly-vr/source/Untitled.glb', pos: [40.5, 4.5], fit: 20 }, // gallery
+      { file: 'apartment-floor-plan/source/apartment.glb', pos: [-37.5, 39], fit: 22 },           // apartment (rooms)
+      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 40.5], fit: 26 },         // floor plan (rooms)
+      { file: 'appartement/source/appartement.glb', pos: [39, 39], fit: 20 },                     // apartment (rooms)
     ],
     spawns: [
-      [-28, -28], [0, -30], [28, -28],
-      [-32, 4], [32, 6], [-28, 28], [0, 30], [28, 28],
-      [-14, -14], [14, 14], [16, -16], [-16, 16],
+      [-21, -21], [0, -22], [21, -21],
+      [-24, 3], [24, 4], [-21, 21], [0, 22], [21, 21],
+      [-10, -10], [10, 10], [12, -12], [-12, 12],
     ],
   },
 

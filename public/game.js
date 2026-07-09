@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=19';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=20';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1261,10 +1261,10 @@ function undoPaint() {
 }
 
 // ---- WHISTLE: the anti-camping heartbeat ----------------------------------
-// Every hider auto-whistles every 45s (server-driven), betraying their rough
+// Every hider auto-whistles every 30s (server-driven), betraying their rough
 // position by SOUND. Whistling manually resets that countdown — so you whistle
 // on purpose while the seeker is far away to stay silent when it's near.
-const WHISTLE_EVERY_MS = 45000;
+const WHISTLE_EVERY_MS = 30000;
 let myWhistleDeadline = 0;      // local mirror of the server countdown
 
 function sendWhistle() {
@@ -1724,6 +1724,7 @@ function updateCamera() {
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
   }
+  camera.up.set(0, 1, 0);   // restore after the debug top-down view
   // `s` scales the framing to the actor's size (hiders are small).
   const thirdPerson = (target, s = 1) => {
     cam.pitch = clamp(cam.pitch, TP.pitchMin, TP.pitchMax);

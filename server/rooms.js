@@ -27,11 +27,11 @@ export const DEFAULT_SETTINGS = {
   rounds: 3,       // bumped up at start so every player seeks at least once
   seekers: 1,      // seekers per round; everyone else hides
   bots: 0,         // bot hiders (great for solo play)
-  whistle: true,   // hiders auto-whistle every 45s (manual whistle resets it)
+  whistle: true,   // hiders auto-whistle every 30s (manual whistle resets it)
 };
 
 export const SEEKER_HP = 5;       // missed shots cost health — no spam-shooting
-export const WHISTLE_EVERY = 45000;
+export const WHISTLE_EVERY = 30000;
 
 function blankBody(spawn) {
   return {
