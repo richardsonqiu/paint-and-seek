@@ -68,13 +68,15 @@ export const MAPS = {
       // west bathroom/bedrooms are excluded entirely. Trim planes sit
       // INSIDE the cap wall slabs so sliced cross-sections never peek out.
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true,
-        trim: { minX: -5.6, maxX: 7.9 } },
+        trim: { minX: -6.4, maxX: 7.9 } },
     ],
-    // Solid walls on the cut lines — the flat honestly ENDS here.
-    capWalls: [{ x: -5.5, len: 14 }, { x: 7.8, len: 14 }],
+    // Solid walls on the cut lines — the flat honestly ENDS here. The west
+    // cut sits behind the living-room sofa (sofa west end ~-5.9) so the
+    // whole couch is inside the room, backed naturally against the wall.
+    capWalls: [{ x: -6.3, len: 14 }, { x: 7.8, len: 14 }],
     // Play area stops at the cap walls' inner faces so nobody can stand
     // inside a wall slab and poke the camera through it.
-    bounds: { minX: -5.1, maxX: 7.4, minZ: -6.5, maxZ: 6.5 },
+    bounds: { minX: -6.0, maxX: 7.4, minZ: -6.5, maxZ: 6.5 },
     // Spawn points grouped by area. Each round the seeker and the hiders are
     // placed in DIFFERENT areas so a hider never starts next to the seeker.
     // Spots are in open floor — never boxed into the narrow-doored rooms.
