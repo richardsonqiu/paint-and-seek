@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=22';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=23';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -2539,6 +2539,7 @@ function renderGame() {
   if (key !== lastPhaseKey) {
     lastPhaseKey = key;
     if (phase === 'prep') {
+      window.__ov = 0;   // a leftover debug overview must never hijack a round
       if (role === 'hider') showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
       else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
     } else if (phase === 'hunt') {
