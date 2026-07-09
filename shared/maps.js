@@ -66,12 +66,13 @@ export const MAPS = {
     scenes: [
       // trim: the far wings (4 near-identical beige bedrooms) are REMOVED
       // from the model — fully-outside meshes dropped, straddling ones GPU-
-      // clipped — so the flat genuinely ends at the play area. The trim sits
-      // ~0.8m outside the bounds so the boundary wall itself survives and
-      // rooms still end in a real wall, not a see-through cut.
+      // clipped right at the play edge. capWalls below seal the cuts with
+      // solid plaster walls, so no half-sliced furniture peeks through.
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true,
-        trim: { minX: -11.3, maxX: 10.3 } },
+        trim: { minX: -10.6, maxX: 9.6 } },
     ],
+    // Solid walls on the cut lines — the flat honestly ENDS here.
+    capWalls: [{ x: -10.55, len: 14 }, { x: 9.55, len: 14 }],
     // Play area: one west bedroom, living/dining, kitchen and the east suite.
     bounds: { minX: -10.5, maxX: 9.5, minZ: -6.5, maxZ: 6.5 },
     // Spawn points grouped by area (scaled 34/42 with the scene). Each round

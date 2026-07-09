@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=23';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=24';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -575,7 +575,32 @@ function buildScene(mapId) {
       trim: sc.trim || null,
     });
   }
+  for (const w of (map.capWalls || [])) buildCapWall(g, map, w);
   for (const c of (map.connectors || [])) buildConnector(g, c);
+}
+
+// A plain solid wall sealing a trimmed play area (e.g. where The Flat's
+// removed wings used to connect) — so the map ends in an honest wall, not a
+// cut-open room. Spec: { x } or { z } for the wall line, plus optional
+// len / h / color.
+function buildCapWall(group, map, spec) {
+  const h = spec.h || 3.2, t = 0.35;
+  let geo, px = 0, pz = 0;
+  if (spec.x != null) {
+    geo = new THREE.BoxGeometry(t, h, spec.len || map.size.z);
+    px = spec.x; pz = spec.at || 0;
+  } else {
+    geo = new THREE.BoxGeometry(spec.len || map.size.x, h, t);
+    px = spec.at || 0; pz = spec.z;
+  }
+  const wall = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: new THREE.Color(spec.color || '#dbd7d0'), roughness: 0.95,
+  }));
+  wall.position.set(px, h / 2, pz);
+  wall.castShadow = true; wall.receiveShadow = true;
+  group.add(wall);
+  try { wall.geometry.computeBoundsTree(); } catch (_) {}
+  collisionMeshes.push(wall);
 }
 
 // A simple covered walkway (floor + two side walls) bridging two buildings.
