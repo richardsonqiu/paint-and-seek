@@ -68,13 +68,18 @@ export const MAPS = {
       // from the model — fully-outside meshes dropped, straddling ones GPU-
       // clipped right at the play edge. capWalls below seal the cuts with
       // solid plaster walls, so no half-sliced furniture peeks through.
+      // The trim planes sit INSIDE the cap wall slabs (walls at ±10.5/9.5,
+      // faces at ±10.325/9.325), so every sliced cross-section — sofas! —
+      // is swallowed by the wall instead of poking out of it.
       { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 0], fit: 34, collide: true,
-        trim: { minX: -10.6, maxX: 9.6 } },
+        trim: { minX: -10.4, maxX: 9.4 } },
     ],
     // Solid walls on the cut lines — the flat honestly ENDS here.
-    capWalls: [{ x: -10.55, len: 14 }, { x: 9.55, len: 14 }],
+    capWalls: [{ x: -10.5, len: 14 }, { x: 9.5, len: 14 }],
     // Play area: one west bedroom, living/dining, kitchen and the east suite.
-    bounds: { minX: -10.5, maxX: 9.5, minZ: -6.5, maxZ: 6.5 },
+    // Stops at the cap walls' INNER faces (walls at ±10.5/9.5, 0.35 thick),
+    // so nobody can stand inside the wall slab and poke the camera through.
+    bounds: { minX: -10.1, maxX: 9.1, minZ: -6.5, maxZ: 6.5 },
     // Spawn points grouped by area (scaled 34/42 with the scene). Each round
     // the seeker and the hiders are placed in DIFFERENT areas so a hider
     // never starts next to the seeker. Spots are all in HALLS / open areas —
