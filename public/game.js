@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=28';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=29';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1971,8 +1971,9 @@ setInterval(() => {
   tick(Math.min(clock.getDelta(), 0.05), false);
 }, 33);
 
-// Start climbing: lock onto the detected surface, snap flush against it with
-// your BACK to the wall (the picture-frame pose — paintable side out).
+// Start climbing: lock onto the detected surface, snap flush against it FACING
+// the wall (eyes pressed to it, painted back to the room) — the picture-frame
+// hide, where your body reads as decoration hung on the wall.
 function startClimb() {
   if (!nearSurface || !myBody) return;
   climbing = true; climbMiss = 0;
@@ -1981,7 +1982,7 @@ function startClimb() {
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
   const h = _rc.intersectObjects(collisionMeshes, true)[0];
   if (h) { myBody.x = h.point.x - climbDir.x * CLING_GAP; myBody.z = h.point.z - climbDir.z * CLING_GAP; }
-  myBody.ry = Math.atan2(-climbDir.x, -climbDir.z);  // face OUT of the wall
+  myBody.ry = Math.atan2(climbDir.x, climbDir.z);  // face INTO the wall (eyes to the wall)
   myBody.pose = 'climb';
   syncPoseButtons();
   SFX.click();
