@@ -114,85 +114,37 @@ function clampPlay(map, x, z) {
   return [Math.max(b.minX, Math.min(b.maxX, x)), Math.max(b.minZ, Math.min(b.maxZ, z))];
 }
 
-// ---- Bot seeker AI -------------------------------------------------------
-// Bots take seeker turns so humans get to HIDE even in tiny lobbies. The AI
-// is deliberately simple and beatable: patrol the spawn spots, run toward
-// whistles, and only "see" a hider within a short radius. Same reload rules
-// as humans.
-const BOT_SIGHT = 2.4;      // metres — must nearly stumble over you
-const BOT_SHOOT = 1.25;     // fire when this close (blast radius is 1.4)
-function startBotSeekers(room) {
-  const botSeekers = room.activePlayers().filter((p) => p.isBot && p.role === 'seeker');
-  if (!botSeekers.length) return;
-  const pts = spawnPoints(room.map);
-  for (const b of botSeekers) { b.botTarget = null; b.lastShot = Date.now(); }
-  room._botHunt = setInterval(() => {
-    if (room.phase !== 'hunt') { stopBots(room); return; }
-    const now = Date.now();
-    let moved = false;
-    for (const b of room.activePlayers()) {
-      if (!b.isBot || b.role !== 'seeker') continue;
-      // Sense: the nearest still-hidden hider inside sight range.
-      let prey = null, pd = BOT_SIGHT;
-      for (const h of room.remainingHiders()) {
-        const d = Math.hypot(h.body.x - b.body.x, h.body.z - b.body.z);
-        if (d < pd) { pd = d; prey = h; }
-      }
-      if (prey && pd <= BOT_SHOOT && now - (b.lastShot || 0) >= RELOAD_MS) {
-        b.lastShot = now;
-        botShoot(room, b, prey);
-        continue;
-      }
-      // Steer: chase prey, else head for the current patrol point (a heard
-      // whistle overrides it — see alertBotSeekers).
-      let tx, tz;
-      if (prey) { tx = prey.body.x; tz = prey.body.z; }
-      else {
-        if (!b.botTarget ||
-            Math.hypot(b.botTarget.x - b.body.x, b.botTarget.z - b.body.z) < 0.6) {
-          const t = pts[Math.floor(Math.random() * pts.length)];
-          const [px, pz] = clampPlay(room.map, t[0] + (Math.random() * 3 - 1.5), t[2] + (Math.random() * 3 - 1.5));
-          b.botTarget = { x: px, z: pz };
-        }
-        tx = b.botTarget.x; tz = b.botTarget.z;
-      }
-      const dx = tx - b.body.x, dz = tz - b.body.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 0.05) {
-        const step = Math.min(d, 2.4 * 0.25);      // ~2.4 m/s at 250ms ticks
-        b.body.x += (dx / d) * step;
-        b.body.z += (dz / d) * step;
-        b.body.ry = Math.atan2(dx, dz);
-        moved = true;
-      }
-    }
-    if (moved) scheduleBroadcast(room);
-  }, 250);
-}
+// ---- Bot seeker plumbing --------------------------------------------------
+// Bot seekers are DRIVEN BY THE HOST'S CLIENT, not the server: only clients
+// have the level geometry, so only they can walk bots through doorways
+// (instead of through walls) and check true line-of-sight before a bot
+// "spots" a hider. The server just validates and applies:
+//   'botmove'  — host reports a bot seeker's position (clamped here)
+//   'botshoot' — host asks a bot to fire; same reload + blast rules as a
+//                human 'shoot', resolved server-side so scoring stays fair.
+// If the host quits, host migration hands the AI to the next client.
 
-// A whistle rings out: every bot seeker beelines for the sound.
-function alertBotSeekers(room, x, z) {
-  for (const b of room.activePlayers()) {
-    if (b.isBot && b.role === 'seeker') {
-      const [px, pz] = clampPlay(room.map, x, z);
-      b.botTarget = { x: px, z: pz };
-    }
+// Resolve a paint blast at (x,z) from `shooter` — shared by human and bot
+// shots: emits the blast, catches the nearest hider in radius, scores.
+function resolveShot(room, shooter, x, y, z, color) {
+  io.to(room.code).emit('blast', { x, y, z, color });
+  let hit = null, best = 1.4; // blast radius (metres)
+  for (const h of room.hiders()) {
+    if (h.found) continue;
+    const d = Math.hypot(h.body.x - x, h.body.z - z);
+    if (d < best) { best = d; hit = h; }
   }
-}
-
-// Bot pulls the trigger point-blank — same blast/score/broadcast as a
-// human 'shoot' hit.
-function botShoot(room, p, hit) {
-  io.to(room.code).emit('blast', { x: hit.body.x, y: 0.5, z: hit.body.z, color: '#ff3bd0' });
+  if (!hit) return null;
   hit.found = true;
   const huntMs = room.huntMs || room.settings.huntTime * 1000;
   const msLeft = Math.max(0, room.deadline - Date.now());
-  p.score += 60 + Math.round((msLeft / huntMs) * 40);
+  shooter.score += 60 + Math.round((msLeft / huntMs) * 40);
   hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
   if (room.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
-  io.to(room.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
+  io.to(room.code).emit('tagged', { id: hit.id, name: hit.name, by: shooter.name });
   broadcast(room);
   maybeEndEarly(room);
+  return hit;
 }
 
 function enterHunt(room) {
@@ -212,7 +164,8 @@ function enterHunt(room) {
   }
   startPump(room);
   broadcast(room);
-  startBotSeekers(room);
+  // Bot seekers: arm their reload; the host's client drives their movement.
+  for (const p of room.activePlayers()) if (p.isBot && p.role === 'seeker') p.lastShot = now;
   room._timer = setTimeout(() => endRound(room, 'time'), room.huntMs);
 }
 
@@ -223,7 +176,6 @@ function tickWhistles(room) {
     if (now >= h.nextWhistle) {
       h.nextWhistle = now + WHISTLE_EVERY;
       io.to(room.code).emit('whistle', { id: h.id, x: h.body.x, y: h.body.y || 0, z: h.body.z, auto: true });
-      alertBotSeekers(room, h.body.x, h.body.z);
     }
   }
 }
@@ -420,27 +372,8 @@ io.on('connection', (socket) => {
     p.lastShot = now;
     const color = (typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color)) ? data.color : '#ff3bd0';
     const y = typeof data.y === 'number' ? data.y : 0.5;
-    io.to(r.code).emit('blast', { x: data.x, y, z: data.z, color });
-
-    let hit = null, best = 1.4; // blast radius (metres)
-    for (const h of r.hiders()) {
-      if (h.found) continue;
-      const d = Math.hypot(h.body.x - data.x, h.body.z - data.z);
-      if (d < best) { best = d; hit = h; }
-    }
-    if (hit) {
-      hit.found = true;
-      const huntMs = r.huntMs || r.settings.huntTime * 1000;
-      const msLeft = Math.max(0, r.deadline - now);
-      p.score += 60 + Math.round((msLeft / huntMs) * 40);
-      hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
-      if (r.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
-      io.to(r.code).emit('tagged', { id: hit.id, name: hit.name, by: p.name });
-      broadcast(r);
-      maybeEndEarly(r);
-    } else {
-      io.to(socket.id).emit('miss', {});
-    }
+    const hit = resolveShot(r, p, data.x, y, data.z, color);
+    if (!hit) io.to(socket.id).emit('miss', {});
   });
 
   // Hider whistles on purpose (taunt) — betrays them now, but resets the 45s
@@ -462,7 +395,33 @@ io.on('connection', (socket) => {
       scheduleBroadcast(r);
     }
     io.to(r.code).emit('whistle', { id: p.id, x: p.body.x, y: p.body.y || 0, z: p.body.z, auto: false, bonus });
-    alertBotSeekers(r, p.body.x, p.body.z);
+  });
+
+  // ---- Host-driven bot seekers (see resolveShot notes above) ----
+  socket.on('botmove', ({ id, x, y, z, ry }) => {
+    const r = room();
+    if (!r || socket.id !== r.hostId || r.phase !== 'hunt') return;
+    const b = r.players.get(id);
+    if (!b || !b.isBot || b.role !== 'seeker') return;
+    if (typeof x === 'number' && typeof z === 'number') {
+      const [cx, cz] = clampPlay(r.map, x, z);
+      b.body.x = cx; b.body.z = cz;
+    }
+    if (typeof y === 'number') b.body.y = Math.max(-2, Math.min(20, y));
+    if (typeof ry === 'number') b.body.ry = ry;
+    scheduleBroadcast(r);
+  });
+
+  socket.on('botshoot', ({ id, x, z }) => {
+    const r = room();
+    if (!r || socket.id !== r.hostId || r.phase !== 'hunt') return;
+    const b = r.players.get(id);
+    if (!b || !b.isBot || b.role !== 'seeker') return;
+    if (typeof x !== 'number' || typeof z !== 'number') return;
+    const now = Date.now();
+    if (now - (b.lastShot || 0) < RELOAD_MS - 150) return; // same reload as humans
+    b.lastShot = now;
+    resolveShot(r, b, x, 0.5, z, '#ff3bd0');
   });
 
   // Seeker reports its position (for spectators' minimaps). Privacy is handled

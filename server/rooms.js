@@ -223,6 +223,7 @@ export class Room {
           x: s.body.x, y: s.body.y || 0, z: s.body.z, ry: s.body.ry || 0,
           pose: s.body.pose || 'standing', paint: null,
           id: s.id, name: s.name, shape: s.shape, found: false, seeker: true,
+          bot: !!s.isBot,   // the host's client drives bot seekers
           mine: s.id === forId,
         });
       }

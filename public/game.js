@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE } from '/shared/maps.js?v=34';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=35';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1779,6 +1779,109 @@ function sendSeek() {
   });
 }
 
+// ---- Host-driven bot seeker AI --------------------------------------------
+// The server has no level geometry, so the HOST's client simulates bot
+// seekers with the real collision meshes:
+//  - they walk with the same wall collision as players (never through walls),
+//    picking patrol spots and RE-targeting when stuck, which makes them sweep
+//    room to room through the doorways;
+//  - they only "spot" a hider with a clear LINE OF SIGHT, inside a forward
+//    cone, at short range — and silhouette-breaking poses HALVE that range,
+//    so a well-hidden player is genuinely hard to find (the AI never reads
+//    hider positions through walls);
+//  - a whistle sends them to investigate the sound;
+//  - shots go through the server ('botshoot') with the normal 3s reload.
+// Host migration hands the AI to the next client automatically.
+const botSim = new Map();   // bot id → simulation state
+function updateBotSeekers(dt) {
+  const hosting = snap && snap.phase === 'hunt' && snap.hostId === myId;
+  if (!hosting) { if (botSim.size) botSim.clear(); return; }
+  const bots = (snap.bodies || []).filter((b) => b.seeker && b.bot);
+  if (!bots.length) { botSim.clear(); return; }
+  const cs = charScale();
+  const map = MAPS[snap.mapId] || MAPS[DEFAULT_MAP_ID];
+  const pts = spawnPoints(map);
+  const bnd = bounds();
+  const now = Date.now();
+  for (const bb of bots) {
+    let s = botSim.get(bb.id);
+    if (!s) {
+      s = { x: bb.x, y: bb.y || 0, z: bb.z, ry: bb.ry || 0, target: null, mode: 'patrol',
+            lastSeen: null, senseAt: 0, sendAt: 0, shotAt: now, stuck: { x: bb.x, z: bb.z, t: 0 } };
+      botSim.set(bb.id, s);
+    }
+    // ---- Sense (every 150ms — LOS raycasts aren't free) ----
+    if (now >= s.senseAt) {
+      s.senseAt = now + 150;
+      s.prey = null;
+      let pd = Infinity;
+      const SIGHT = 3.4 * cs;
+      for (const h of snap.bodies) {
+        if (h.seeker || h.found) continue;
+        const dx = h.x - s.x, dz = h.z - s.z;
+        const d = Math.hypot(dx, dz);
+        // Hiding pays: any non-standing pose halves the spot range.
+        const sight = (h.pose && h.pose !== 'standing') ? SIGHT * 0.5 : SIGHT;
+        if (d > sight || d >= pd) continue;
+        // Forward cone (~150°) unless practically touching.
+        if (d > 0.6 && (Math.sin(s.ry) * dx + Math.cos(s.ry) * dz) / (d || 1) < 0.25) continue;
+        // True line of sight through the level.
+        _ro.set(s.x, (s.y || 0) + 0.9 * cs, s.z);
+        _rd.set(dx, ((h.y || 0) + 0.3 * cs) - ((s.y || 0) + 0.9 * cs), dz).normalize();
+        _rc.set(_ro, _rd); _rc.far = Math.max(0.1, d - 0.25);
+        if (collisionMeshes.length && _rc.intersectObjects(collisionMeshes, true).length) continue;
+        s.prey = { x: h.x, z: h.z }; pd = d;
+      }
+      if (s.prey) { s.mode = 'chase'; s.lastSeen = { ...s.prey }; }
+      else if (s.mode === 'chase') { s.mode = 'investigate'; s.target = s.lastSeen; }
+      // Point-blank + reloaded → fire (server re-validates the reload).
+      if (s.prey && pd < 1.25 && now - s.shotAt >= 3050) {
+        s.shotAt = now;
+        socket.emit('botshoot', { id: bb.id, x: s.prey.x, z: s.prey.z });
+      }
+    }
+    // ---- Steer ----
+    let tx, tz;
+    if (s.prey) { tx = s.prey.x; tz = s.prey.z; }
+    else {
+      if (s.whistle) { s.target = s.whistle; s.whistle = null; s.mode = 'investigate'; }
+      if (!s.target || Math.hypot(s.target.x - s.x, s.target.z - s.z) < 0.7) {
+        const t = pts[Math.floor(Math.random() * pts.length)];
+        s.target = {
+          x: clamp(t[0] + (Math.random() * 3 - 1.5), bnd.minX, bnd.maxX),
+          z: clamp(t[2] + (Math.random() * 3 - 1.5), bnd.minZ, bnd.maxZ),
+        };
+        s.mode = 'patrol';
+      }
+      tx = s.target.x; tz = s.target.z;
+    }
+    // ---- Move with the players' collision rules ----
+    const dx = tx - s.x, dz = tz - s.z, d = Math.hypot(dx, dz);
+    if (d > 0.06) {
+      const spd = MOVE_SPEED * cs * 0.85;   // a touch slower than a human seeker
+      let nx = clamp(s.x + (dx / d) * spd * dt, bnd.minX, bnd.maxX);
+      let nz = clamp(s.z + (dz / d) * spd * dt, bnd.minZ, bnd.maxZ);
+      [nx, nz] = slideMove(s.x, s.z, nx, nz, (s.y || 0) + 0.25 * cs, 0.15 * cs, (s.y || 0) + 0.5 * cs);
+      if (hasFloor(nx, nz, s.y)) { s.x = nx; s.z = nz; }
+      s.ry = lerpAngle(s.ry, Math.atan2(dx, dz), Math.min(1, dt * 8));
+      s.y = groundUnder(s.x, (s.y || 0) + 0.4, s.z);
+    }
+    // ---- Stuck? Re-target — this is what turns wall-humping into sweeping ----
+    s.stuck.t += dt;
+    if (Math.hypot(s.x - s.stuck.x, s.z - s.stuck.z) > 0.4) {
+      s.stuck = { x: s.x, z: s.z, t: 0 };
+    } else if (s.stuck.t > 1.4) {
+      s.target = null; s.lastSeen = null; s.mode = 'patrol';
+      s.stuck = { x: s.x, z: s.z, t: 0 };
+    }
+    // ---- Report to the server (~9 Hz per bot) ----
+    if (now - s.sendAt > 110) {
+      s.sendAt = now;
+      socket.emit('botmove', { id: bb.id, x: s.x, y: s.y, z: s.z, ry: s.ry });
+    }
+  }
+}
+
 function updateCamera() {
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
@@ -1946,6 +2049,7 @@ function tick(dt, render) {
   frameCount++;
   if (joyId === null) joyVec = keyboardVec(); // keyboard drives movement when the stick is idle
   applyMovement(dt);
+  updateBotSeekers(dt);   // host drives bot seekers (also in background ticks)
   if (!render) return;
   updateWalk(dt);
   const t = clock.elapsedTime;
@@ -2888,6 +2992,8 @@ socket.on('whistle', ({ id, x, y, z, auto, bonus }) => {
   } else if (snap && snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     addWhistleCue(id, x, z);
   }
+  // Bot seekers (host-driven) head for the sound.
+  for (const [, s] of botSim) s.whistle = { x, z };
 });
 
 // Directional whistle cues: one arrow PER whistling hider orbits the

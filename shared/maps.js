@@ -101,9 +101,9 @@ export const MAPS = {
     name: 'The Plaza',
     // Shrunk ~17% (fit 46 -> 38): tighter sweep for the seeker outdoors.
     size: { x: 44, z: 44, h: 14 },
-    // Bigger toys (was 1.4) so a 34m square plays close to The Flat's
-    // findability; movement scales with charScale so they don't crawl.
-    charScale: 2.0,
+    // Sized to sit naturally among the plaza's benches and courts — big
+    // enough to spot, small enough to look right (movement scales with it).
+    charScale: 1.5,
     ground: '#8fae74',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 38, far: 118 },
@@ -142,10 +142,10 @@ export const MAPS = {
     // Shrunk 25% (everything ×0.75): the old 160m sprawl took too long to
     // cross — districts keep their layout, just packed tighter.
     size: { x: 120, z: 120, h: 40 },
-    // The big map — kept larger on purpose, but charScale 3.2 (was 2) plus
-    // charScale-scaled movement cut the central cross-time from ~35s to ~11s.
-    // Bounds stay ±50 so the outer buildings aren't sliced by an edge.
-    charScale: 3.2,
+    // The big map: characters scaled to read against the buildings without
+    // looking like giants; movement scales with charScale, so crossing the
+    // centre still takes ~16s.
+    charScale: 2.2,
     ground: '#9fb08a',
     sky: '#bcd6ea',
     fog: { color: '#cfe0ec', near: 55, far: 175 },
@@ -184,9 +184,9 @@ export const MAPS = {
     id: 'grounds',
     name: 'The Grounds',
     size: { x: 54, z: 54, h: 10 },
-    // Bigger toys (was 1.3) so the 54m compound plays close to The Flat's
-    // findability; charScale-scaled movement keeps them from crawling.
-    charScale: 2.3,
+    // Sized to the kits' people-scale props (barrels, stalls) — hiders tuck
+    // behind them without towering over them; movement scales with it.
+    charScale: 1.6,
     ground: '#6fa84e',
     sky: '#aed8f0',
     fog: { color: '#cfe7f5', near: 34, far: 88 },
