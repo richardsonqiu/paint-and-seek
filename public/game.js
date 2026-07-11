@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=35';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=36';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1882,11 +1882,75 @@ function updateBotSeekers(dt) {
   }
 }
 
+// ---- Camera anti-flimsiness (small rooms) ----------------------------------
+// Two fixes for tight interiors:
+//  1. smoothCamDist — the collision pull-in used to SNAP the camera frame to
+//     frame off lumpy wall meshes; now it pulls in fast but eases back out,
+//     so orbiting near a wall feels solid instead of jittery.
+//  2. updateOccluderFade — whatever still sits between the camera and the
+//     character (the wall the camera is pressed against, a cabinet you back
+//     into) turns translucent, so you can ALWAYS see yourself to navigate.
+let _camLastT = 0;
+function camFrameDt() {
+  const now = performance.now();
+  const dt = _camLastT ? Math.min(0.1, (now - _camLastT) / 1000) : 0.016;
+  _camLastT = now;
+  return dt;
+}
+const _camDistSm = { tp: null, ots: null };
+function smoothCamDist(key, want, full, dt) {
+  let cur = _camDistSm[key];
+  if (cur == null || !isFinite(cur)) cur = want;
+  const k = want < cur ? Math.min(1, dt * 16) : Math.min(1, dt * 5);  // in fast, out easy
+  cur += (want - cur) * k;
+  cur = Math.min(cur, full);
+  _camDistSm[key] = cur;
+  return cur;
+}
+
+// Occluder fading: meshes on the look-target → camera ray (and just behind
+// the lens) swap to a cached translucent clone of their material; they swap
+// back the moment they stop blocking. Clones preserve trim clipping planes.
+const fadedOccluders = new Set();
+function setMeshFade(o, on) {
+  if (on) {
+    if (!o.userData._fadeMat) {
+      const mk = (m) => { const c = m.clone(); c.transparent = true; c.opacity = 0.28; c.depthWrite = false; return c; };
+      o.userData._origMat = o.material;
+      o.userData._fadeMat = Array.isArray(o.material) ? o.material.map(mk) : mk(o.material);
+    }
+    if (o.material !== o.userData._fadeMat) o.material = o.userData._fadeMat;
+  } else if (o.userData._origMat && o.material !== o.userData._origMat) {
+    o.material = o.userData._origMat;
+  }
+}
+function updateOccluderFade(tx, ty, tz) {
+  const seen = new Set();
+  if (collisionMeshes.length) {
+    _ro.set(tx, ty, tz);
+    _rd.set(camera.position.x - tx, camera.position.y - ty, camera.position.z - tz);
+    const full = _rd.length() || 1; _rd.normalize();
+    // Look a bit PAST the camera too: the wall the lens is pressed against
+    // fills the screen even though its face is just behind the camera.
+    _rc.set(_ro, _rd); _rc.far = full + 0.45;
+    for (const h of _rc.intersectObjects(collisionMeshes, true)) seen.add(h.object);
+  }
+  for (const o of [...fadedOccluders]) {
+    if (!seen.has(o)) { setMeshFade(o, false); fadedOccluders.delete(o); }
+  }
+  for (const o of seen) { setMeshFade(o, true); fadedOccluders.add(o); }
+}
+function clearOccluderFade() {
+  for (const o of fadedOccluders) setMeshFade(o, false);
+  fadedOccluders.clear();
+}
+
 function updateCamera() {
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
   }
   camera.up.set(0, 1, 0);   // restore after the debug top-down view
+  const camDt = camFrameDt();
   // `s` scales the framing to the actor's size (hiders are small).
   const thirdPerson = (target, s = 1) => {
     cam.pitch = clamp(cam.pitch, TP.pitchMin, TP.pitchMax);
@@ -1908,23 +1972,25 @@ function updateCamera() {
     // Paint mode: aim below the body so it rides high on screen, clear of the
     // paint strip along the bottom.
     if (sheetOpen === 'paint') lookY -= 0.85 * s;
-    // Pull the camera in if geometry is between it and the chameleon, so it
-    // never buries inside a wall/furniture.
+    // Pull the camera in when geometry blocks the view — SMOOTHED (snap in,
+    // ease back out) so lumpy walls in small rooms don't make it jitter.
     if (collisionMeshes.length) {
       _ro.set(target.x, lookY, target.z);
       _rd.set(cx - target.x, cy - lookY, cz - target.z);
       const full = _rd.length() || 1; _rd.normalize();
       _rc.set(_ro, _rd); _rc.far = full;
       const h = _rc.intersectObjects(collisionMeshes, true)[0];
-      if (h && h.distance < full) {
-        const d = Math.max(0.12, h.distance - 0.1);
-        cx = target.x + _rd.x * d; cy = lookY + _rd.y * d; cz = target.z + _rd.z * d;
-      }
+      const want = (h && h.distance < full) ? Math.max(0.12, h.distance - 0.1) : full;
+      const d = smoothCamDist('tp', want, full, camDt);
+      cx = target.x + _rd.x * d; cy = lookY + _rd.y * d; cz = target.z + _rd.z * d;
     } else {
       [cx, cz] = resolveCollision(cx, cz, 0.2);
     }
     camera.position.set(cx, cy, cz);
     camera.lookAt(target.x, lookY, target.z);
+    // Whatever still intrudes (the wall the camera is pressed against in a
+    // tight room) fades out so the character is NEVER hidden by it.
+    updateOccluderFade(target.x, lookY, target.z);
   };
   const firstPerson = (pos, eyeH) => {
     cam.pitch = clamp(cam.pitch, FP.pitchMin, FP.pitchMax);
@@ -1933,6 +1999,7 @@ function updateCamera() {
     const eye = (pos.y || 0) + (eyeH || FP.eye);
     camera.position.set(pos.x, eye, pos.z);
     camera.lookAt(pos.x + lx, eye + sp, pos.z + lz);
+    clearOccluderFade();
   };
 
   // Over-the-shoulder shooter camera: pivot at the hunter's right shoulder,
@@ -1956,13 +2023,13 @@ function updateCamera() {
       const full = _rd.length() || 1; _rd.normalize();
       _rc.set(_ro, _rd); _rc.far = full;
       const h = _rc.intersectObjects(collisionMeshes, true)[0];
-      if (h && h.distance < full) {
-        const d = Math.max(0.15, h.distance - 0.1);
-        cx = px + _rd.x * d; cy = pivotY + _rd.y * d; cz = pz + _rd.z * d;
-      }
+      const want = (h && h.distance < full) ? Math.max(0.15, h.distance - 0.1) : full;
+      const d = smoothCamDist('ots', want, full, camDt);
+      cx = px + _rd.x * d; cy = pivotY + _rd.y * d; cz = pz + _rd.z * d;
     }
     camera.position.set(cx, cy, cz);
     camera.lookAt(px + vx * 8, pivotY + vy * 8, pz + vz * 8);
+    updateOccluderFade(px, pivotY, pz);   // never let a close wall hide the hunter
   };
 
   // Round-end reveal: a guided tour. Brief zoomed-out overview, then the
@@ -1971,6 +2038,7 @@ function updateCamera() {
   // hider was tucked in. Ends back on the slow overview orbit.
   if (snap && snap.phase === 'roundover') {
     camera.up.set(0, 1, 0);
+    clearOccluderFade();   // the reveal tour should see solid walls
     revealCamera();
     return;
   }
