@@ -297,6 +297,19 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 }
 .action-btn.peek { right: 108px; bottom: calc(232px + var(--safe-b)); background: linear-gradient(180deg, #d9c8ff, #a88bee); }
 .action-btn.peek.on { background: linear-gradient(180deg, #ffe08a, var(--warn)); }
+/* Left-thumb fire (PUBG/CoD layout): aim with the right thumb, fire with the
+   left, above the joystick. */
+.action-btn.fire-left {
+  left: 132px; right: auto; bottom: calc(248px + var(--safe-b));
+  width: 70px; height: 70px;
+}
+
+/* Camera speed slider (home) */
+input[type="range"] {
+  padding: 0; height: 34px; accent-color: var(--accent);
+  background: transparent; border: none;
+}
+.sens-val { color: var(--accent); }
 
 /* Fullscreen role/phase banner */
 .banner {

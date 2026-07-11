@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=38" />
+  <link rel="stylesheet" href="/style.css?v=39" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -75,6 +75,10 @@
       <div class="field">
         <span>Pick a body</span>
         <div id="shapePicker" class="shape-picker"></div>
+      </div>
+      <div class="field">
+        <span>Camera speed <b id="sensVal" class="sens-val">100%</b></span>
+        <input id="sensInput" type="range" min="50" max="200" step="5" value="100" />
       </div>
       <button id="createBtn" class="btn primary big">🎉 Create Room</button>
       <div class="divider"><span>or join with a code</span></div>
@@ -157,6 +161,9 @@
     <button id="whistleBtn" class="action-btn blend hidden"><span class="ic">😗</span><span class="lbl">Whistle</span></button>
     <button id="clingBtn" class="action-btn cling hidden"><span class="ic">🧗</span><span class="lbl">Wall</span></button>
     <button id="fireBtn" class="action-btn fire hidden"><span id="fireCd" class="fire-cd"></span><span class="ic">🔫</span><span class="lbl">Fire</span></button>
+    <!-- Second fire button by the MOVE thumb (PUBG/CoD layout): fire with the
+         left thumb while the right thumb keeps aiming. -->
+    <button id="fireBtnL" class="action-btn fire fire-left hidden"><span id="fireCdL" class="fire-cd"></span><span class="ic">🔫</span><span class="lbl">Fire</span></button>
     <button id="peekBtn" class="action-btn peek hidden"><span class="ic">🧎</span><span class="lbl">Crouch</span></button>
 
     <!-- Auto-whistle countdown (hiders, hunt phase) -->
@@ -287,6 +294,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=38"></script>
+  <script type="module" src="/game.js?v=39"></script>
 </body>
 </html>

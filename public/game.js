@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=38';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=39';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -159,6 +159,22 @@ function myInfo() {
   const name = ($('nameInput').value || '').trim().slice(0, 12) || 'Chameleon';
   return { name, avatar: chosenAvatar, shape: chosenShape };
 }
+
+// Camera speed: phones vary hugely (screen size, refresh rate, thumb reach),
+// so a per-player sensitivity setting is standard in every mobile shooter.
+// Persisted; multiplies both look axes.
+let lookSensMul = clamp(parseFloat(localStorage.getItem('dg-sens') || '1') || 1, 0.5, 2);
+$('sensInput').value = Math.round(lookSensMul * 100);
+$('sensVal').textContent = `${Math.round(lookSensMul * 100)}%`;
+$('sensInput').addEventListener('input', () => {
+  lookSensMul = clamp((+$('sensInput').value || 100) / 100, 0.5, 2);
+  localStorage.setItem('dg-sens', lookSensMul);
+  $('sensVal').textContent = `${Math.round(lookSensMul * 100)}%`;
+});
+
+// Light haptic taps (Android; iOS Safari has no vibration API — no-op there).
+function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (_) {} }
+
 $('createBtn').onclick = () => socket.emit('create', myInfo(), (res) => {
   if (res && res.ok) { inRoom = true; $('homeError').textContent = ''; SFX.banner(); }
 });
@@ -2108,23 +2124,28 @@ function updateActionButtons() {
   if (seekerHunt !== _fireVis) {
     _fireVis = seekerHunt;
     $('fireBtn').classList.toggle('hidden', !seekerHunt);
+    $('fireBtnL').classList.toggle('hidden', !seekerHunt);
     $('peekBtn').classList.toggle('hidden', !seekerHunt);
     if (!seekerHunt && seekerPeek) { seekerPeek = false; $('peekBtn').classList.remove('on'); }
   }
   $('clingBtn').classList.toggle('on', climbing);
   $('clingBtn').querySelector('.lbl').textContent = climbing ? 'Drop' : 'Wall';
   // Reload feedback: the crosshair turns red and a radial sweep drains off
-  // the Fire button while the paint gun reloads.
+  // BOTH Fire buttons while the paint gun reloads.
   if (seekerHunt) {
     const since = Date.now() - lastShotAt;
     const reloading = since < RELOAD_MS;
     $('crosshair').classList.toggle('reloading', reloading);
-    $('fireCd').style.background = reloading
+    const sweep = reloading
       ? `conic-gradient(transparent ${(since / RELOAD_MS) * 360}deg, rgba(30,30,40,.55) 0)`
       : 'none';
-    const lbl = $('fireBtn').querySelector('.lbl');
+    $('fireCd').style.background = sweep;
+    $('fireCdL').style.background = sweep;
     const txt = reloading ? `${Math.ceil((RELOAD_MS - since) / 1000)}s…` : 'Fire';
-    if (lbl.textContent !== txt) lbl.textContent = txt;
+    for (const btn of [$('fireBtn'), $('fireBtnL')]) {
+      const lbl = btn.querySelector('.lbl');
+      if (lbl.textContent !== txt) lbl.textContent = txt;
+    }
   }
 }
 
@@ -2331,10 +2352,14 @@ canvas.addEventListener('pointermove', (e) => {
   // thumb works WHILE the move thumb steers (independent thumbs).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
+  // Response curve (standard in mobile shooters): small drags stay ~linear
+  // for precise aiming, fast flicks accelerate up to ~1.6× so a big swipe
+  // whips the camera around without cranking base sensitivity.
+  const curve = (v) => v * (1 + Math.min(1.2, Math.abs(v) / 36) * 0.5);
   const fpsSeeker = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
-  cam.yaw -= dx * LOOK_SENS;                       // swipe left = look left
-  if (fpsSeeker) cam.pitch += dy * LOOK_SENS_V;    // aim: swipe up = look up (never inverted)
-  else cam.pitch -= dy * LOOK_SENS_V;              // orbit camera: drag down = orbit up
+  cam.yaw -= curve(dx) * LOOK_SENS * lookSensMul;                    // swipe left = look left
+  if (fpsSeeker) cam.pitch += curve(dy) * LOOK_SENS_V * lookSensMul; // aim: swipe up = look up
+  else cam.pitch -= curve(dy) * LOOK_SENS_V * lookSensMul;           // orbit: drag down = orbit up
 });
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);
@@ -2391,6 +2416,7 @@ function seekerShoot() {
   socket.emit('shoot', { x: p.x, y: p.y, z: p.z, color });
   // Local feedback: muzzle sound + a paintball flying from the gun barrel.
   SFX.shoot();
+  buzz(20);                       // tactile shot feedback (Android)
   const muzzle = paintGun
     ? paintGun.getWorldPosition(new THREE.Vector3())
     : camera.position.clone().addScaledVector(_rd.set(0, -0.2, 0), 1);
@@ -2402,6 +2428,7 @@ function seekerShoot() {
   }
 }
 $('fireBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); seekerShoot(); });
+$('fireBtnL').addEventListener('pointerdown', (e) => { e.preventDefault(); seekerShoot(); });
 
 // Crouch: the seeker drops low to check UNDER furniture — camera sinks to
 // floor level, the body kneels and leans forward as if scanning the ground
@@ -3050,7 +3077,9 @@ socket.on('state', (s) => {
 socket.on('tagged', ({ id, name, by }) => {
   toast(`🎯 ${by} caught ${name}!`);
   SFX.caught();
-  if (id === myId) {           // that was me — red flash + spectate hint
+  if (id === myId) {
+    // That was me — buzz, red flash + spectate hint.
+    buzz([70, 40, 90]);
     const v = $('vignette'); v.classList.remove('hidden');
     setTimeout(() => v.classList.add('hidden'), 850);
     showBanner('😵', 'CAUGHT!', 'You can roam and watch the rest of the round.', '', 2000);
@@ -3063,6 +3092,7 @@ socket.on('tagged', ({ id, name, by }) => {
 socket.on('miss', () => {
   // My shot hit nothing — no paint lost, just the reload wait.
   SFX.caught();
+  buzz(35);
   toast('💦 Miss — reloading…', 1200);
   const v = $('vignette'); v.classList.remove('hidden');
   setTimeout(() => v.classList.add('hidden'), 850);
