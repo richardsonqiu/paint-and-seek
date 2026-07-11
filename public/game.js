@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=40';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=41';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -3246,5 +3246,8 @@ document.addEventListener('dblclick', (e) => e.preventDefault());
 buildAvatars();
 buildShapes();
 show('home');
+// PWA install support: the service worker is what makes the game installable
+// (Add to Home Screen -> real fullscreen, no address bar).
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const params = new URLSearchParams(location.search);
 if (params.get('room')) $('codeInput').value = params.get('room').toUpperCase();

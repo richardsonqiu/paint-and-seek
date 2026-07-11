@@ -4,11 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#35b9f2" />
+  <!-- Installable PWA: added to the home screen, the game runs truly
+       fullscreen — no browser address bar eating the landscape height. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Doodle Guys" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <title>Doodle Guys — paint &amp; seek</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=40" />
+  <link rel="stylesheet" href="/style.css?v=41" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -295,6 +303,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=40"></script>
+  <script type="module" src="/game.js?v=41"></script>
 </body>
 </html>

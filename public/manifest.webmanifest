@@ -1,0 +1,16 @@
+{
+  "name": "Doodle Guys",
+  "short_name": "Doodle Guys",
+  "description": "A 3D camouflage hide-and-seek party game — paint yourself into the scenery.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#35b9f2",
+  "theme_color": "#35b9f2",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
