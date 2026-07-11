@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=41';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=44';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1954,7 +1954,8 @@ function updateBotSeekers(dt) {
 //     so orbiting near a wall feels solid instead of jittery.
 //  2. updateOccluderFade — whatever still sits between the camera and the
 //     character (the wall the camera is pressed against, a cabinet you back
-//     into) turns translucent, so you can ALWAYS see yourself to navigate.
+//     into) gets a small see-through window punched around the character,
+//     so you can ALWAYS see yourself — without X-raying the rest of the map.
 let _camLastT = 0;
 function camFrameDt() {
   const now = performance.now();
@@ -1973,16 +1974,51 @@ function smoothCamDist(key, want, full, dt) {
   return cur;
 }
 
-// Occluder fading: meshes on the look-target → camera ray (and just behind
-// the lens) swap to a cached translucent clone of their material; they swap
-// back the moment they stop blocking. Clones preserve trim clipping planes.
+// Occluder cutout: obstructing meshes do NOT go wholesale-transparent (in
+// these GLBs one mesh can be half the building — fading it would X-ray the
+// whole map and expose every hider). Instead the occluder's shader punches a
+// small DITHERED CIRCULAR WINDOW around the character's screen position, and
+// only for fragments CLOSER to the camera than the character. The rest of
+// the mesh — and everyone hiding behind it elsewhere — stays fully solid.
+const cutoutU = {
+  center: { value: new THREE.Vector2(-1e4, -1e4) },  // gl_FragCoord pixels
+  radius: { value: 0 },                              // pixels
+  dist: { value: 0 },                                // view-space metres
+};
+function makeCutoutMaterial(m) {
+  const c = m.clone();   // preserves trim clipping planes
+  c.customProgramCacheKey = () => 'dg-cutout';
+  c.onBeforeCompile = (shader) => {
+    shader.uniforms.uCutC = cutoutU.center;
+    shader.uniforms.uCutR = cutoutU.radius;
+    shader.uniforms.uCutD = cutoutU.dist;
+    // Own view-depth varying — vViewPosition isn't guaranteed to exist in
+    // every material variant's fragment shader.
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float dgViewZ;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\ndgViewZ = -mvPosition.z;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nvarying float dgViewZ;\nuniform vec2 uCutC;\nuniform float uCutR;\nuniform float uCutD;')
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  {
+    float dgD = distance(gl_FragCoord.xy, uCutC);
+    if (dgD < uCutR && dgViewZ < uCutD) {
+      float dgA = smoothstep(uCutR * 0.45, uCutR, dgD);        // 0 centre → 1 edge
+      float dgR = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
+      if (dgR > dgA * 0.85 + 0.06) discard;                    // screen-door dissolve
+    }
+  }`);
+  };
+  return c;
+}
 const fadedOccluders = new Set();
 function setMeshFade(o, on) {
   if (on) {
     if (!o.userData._fadeMat) {
-      const mk = (m) => { const c = m.clone(); c.transparent = true; c.opacity = 0.28; c.depthWrite = false; return c; };
       o.userData._origMat = o.material;
-      o.userData._fadeMat = Array.isArray(o.material) ? o.material.map(mk) : mk(o.material);
+      o.userData._fadeMat = Array.isArray(o.material)
+        ? o.material.map(makeCutoutMaterial) : makeCutoutMaterial(o.material);
     }
     if (o.material !== o.userData._fadeMat) o.material = o.userData._fadeMat;
   } else if (o.userData._origMat && o.material !== o.userData._origMat) {
@@ -1991,6 +2027,7 @@ function setMeshFade(o, on) {
 }
 function updateOccluderFade(tx, ty, tz) {
   const seen = new Set();
+  const camDist = camera.position.distanceTo(_v3.set(tx, ty, tz));
   if (collisionMeshes.length) {
     _ro.set(tx, ty, tz);
     _rd.set(camera.position.x - tx, camera.position.y - ty, camera.position.z - tz);
@@ -1999,6 +2036,20 @@ function updateOccluderFade(tx, ty, tz) {
     // fills the screen even though its face is just behind the camera.
     _rc.set(_ro, _rd); _rc.far = full + 0.45;
     for (const h of _rc.intersectObjects(collisionMeshes, true)) seen.add(h.object);
+  }
+  // Aim the cutout window at the character: project the look target to
+  // gl_FragCoord pixels, size the hole to roughly the character + a margin.
+  if (seen.size || fadedOccluders.size) {
+    const gl = renderer.getContext();
+    _v3.set(tx, ty, tz).project(camera);
+    cutoutU.center.value.set(
+      (_v3.x * 0.5 + 0.5) * gl.drawingBufferWidth,
+      (_v3.y * 0.5 + 0.5) * gl.drawingBufferHeight);
+    const worldR = 0.9 * charScale();
+    const px = (worldR / Math.max(0.3, camDist)) *
+      (gl.drawingBufferHeight / (2 * Math.tan((camera.fov * Math.PI / 180) / 2)));
+    cutoutU.radius.value = clamp(px, 48, gl.drawingBufferHeight * 0.3);
+    cutoutU.dist.value = Math.max(0.05, camDist - 0.04);
   }
   for (const o of [...fadedOccluders]) {
     if (!seen.has(o)) { setMeshFade(o, false); fadedOccluders.delete(o); }
