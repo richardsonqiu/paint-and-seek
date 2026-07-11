@@ -27,6 +27,10 @@ html, body {
   color: var(--ink);
   overscroll-behavior: none;
   -webkit-user-select: none; user-select: none;
+  /* iOS ignores user-scalable=no: 'manipulation' kills double-tap-to-zoom
+     everywhere (rapid taps on Fire/Jump were zooming the page and stranding
+     players — see also the gesture guards in game.js). */
+  touch-action: manipulation;
 }
 body { display: flex; flex-direction: column; }
 

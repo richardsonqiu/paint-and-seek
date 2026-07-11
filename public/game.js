@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=36';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=38';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -444,7 +444,10 @@ const FP = { eye: 1.65, pitchMin: -1.15, pitchMax: 1.15 };
 // time from their point of view, not survey half the map.
 const ZOOM_HIDER = { min: 0.45, max: 2.0 };
 const ZOOM_SEEKER = { min: 1.2, max: 2.8 };
-const LOOK_SENS = 0.0028;                  // drag-look sensitivity (was too twitchy)
+const LOOK_SENS = 0.0028;                  // horizontal drag-look sensitivity
+// Standard mobile-FPS practice (CoD/PUBG Mobile): vertical aim runs ~30%
+// slower than horizontal — fine pitch control without slowing scanning.
+const LOOK_SENS_V = 0.0020;
 const MOVE_SPEED = 2.8;                    // seeker: a careful stalk
 // Hiders are tiny toy-sized mannequins (~0.34m tall) so they can genuinely
 // melt into the furniture — the headroom rule still keeps them out of
@@ -1195,7 +1198,13 @@ function updateRemoteAnims(dt, t) {
     const baseS = myChar.userData.scale || HIDER_SCALE;
     myChar.scale.y += (baseS * stretch - myChar.scale.y) * Math.min(1, dt * 14);
   }
-  // The local seeker's own body: swing the limbs while striding.
+  // The local seeker's own body: swing the limbs while striding, and lean
+  // the upper body forward while crouching (scanning the floor).
+  if (seekerChar) {
+    const jj = seekerChar.userData.joints;
+    const lean = seekerPeek ? 0.55 : 0;
+    jj.upper.rotation.x += (lean - jj.upper.rotation.x) * Math.min(1, dt * 9);
+  }
   if (seekerChar && seekerPos && !seekerPeek) {
     const j = seekerChar.userData.joints;
     const lp = seekerChar.userData.lastPos || (seekerChar.userData.lastPos = { x: seekerPos.x, z: seekerPos.z });
@@ -1597,8 +1606,12 @@ function isMovingInput() { return Math.hypot(joyVec.x, joyVec.y) > 0.06; }
 // Chase camera: while moving, the camera eases back behind the character's
 // facing; free orbit is only for standing still.
 function followBehind(ry, dt) {
+  // The player's look-drag always wins: while a finger is steering the
+  // camera, the chase camera keeps its hands off the yaw.
+  if (isLookDragging()) return;
   cam.yaw += angleDelta(cam.yaw, ry) * Math.min(1, dt * 3.5);
 }
+function isLookDragging() { return lookId !== null && !painting; }
 
 // Last-resort trap escape. Baked interior models hide one-way pockets
 // (depenetration can shove a body past a lip it can't walk back over).
@@ -2010,8 +2023,11 @@ function updateCamera() {
     const f = forwardXZ(cam.yaw);
     const rx = -f.z, rz = f.x;                       // camera-right
     const cs = charScale();                          // framing follows the hunter's size
-    const side = 0.25 * cs, dist = 0.95 * cs;
-    const pivotY = (p.y || 0) + (seekerPeek ? 0.21 : 0.65) * cs;
+    // Crouching leans the body toward the lens — offset wider + further back
+    // so the low camera looks PAST the hunter instead of into its back.
+    const side = (seekerPeek ? 0.45 : 0.25) * cs;
+    const dist = (seekerPeek ? 1.2 : 0.95) * cs;
+    const pivotY = (p.y || 0) + (seekerPeek ? 0.24 : 0.65) * cs;
     const px = p.x + rx * side, pz = p.z + rz * side;
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     // View direction (pitch+ looks down), camera sits behind the pivot.
@@ -2216,7 +2232,7 @@ window.addEventListener('keydown', (e) => {
   if (k === 'e') { if (climbing) { stopClimb(); sendMove(true); } else startClimb(); }
   if (k === '1' || k === 'q') sendWhistle();
   if (k === 'x') seekerShoot();       // fire at the crosshair (desktop)
-  if (k === 'c') togglePeek();        // peek under furniture (desktop)
+  if (k === 'c') togglePeek();        // crouch to check under furniture (desktop)
   if (k === 'f') { if (hiderControls()) openSheet(sheetOpen === 'paint' ? null : 'paint'); } // paint mode, like the original
   if (k === 'r') { if (hiderControls()) openSheet(sheetOpen === 'pose' ? null : 'pose'); }
   if (k === '=' || k === '+') applyZoom(-0.35);
@@ -2310,16 +2326,15 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (e.pointerId !== lookId) return;
   if (painting) { paintRaycast(e.clientX, e.clientY); return; }
-  // Drag right-to-left → look LEFT, drag top-to-bottom → look UP (the camera
-  // turns toward the finger's direction of travel).
+  // Standard mobile-FPS mapping (à la CoD/PUBG Mobile): the swipe IS the look
+  // direction — swipe right → look right, swipe up → look up — and the look
+  // thumb works WHILE the move thumb steers (independent thumbs).
   const dx = e.movementX || 0, dy = e.movementY || 0;
   moved += Math.abs(dx) + Math.abs(dy);
-  // Third-person panning is for standing still — while moving, the chase
-  // camera owns the yaw. The FPS seeker looks freely at all times (turning
-  // while running is the whole point of a shooter).
   const fpsSeeker = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
-  if (fpsSeeker || !isMovingInput()) cam.yaw -= dx * LOOK_SENS;
-  cam.pitch -= dy * LOOK_SENS;
+  cam.yaw -= dx * LOOK_SENS;                       // swipe left = look left
+  if (fpsSeeker) cam.pitch += dy * LOOK_SENS_V;    // aim: swipe up = look up (never inverted)
+  else cam.pitch -= dy * LOOK_SENS_V;              // orbit camera: drag down = orbit up
 });
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);
@@ -2388,8 +2403,9 @@ function seekerShoot() {
 }
 $('fireBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); seekerShoot(); });
 
-// Peek: the seeker drops low to check UNDER furniture — camera sinks to
-// floor level and the body kneels. Toggle.
+// Crouch: the seeker drops low to check UNDER furniture — camera sinks to
+// floor level, the body kneels and leans forward as if scanning the ground
+// (the lean itself is animated per-frame in updateRemoteAnims). Toggle.
 let seekerPeek = false;
 function togglePeek() {
   if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker') return;
@@ -3129,6 +3145,22 @@ window.__state = () => ({
 });
 
 // ---- Boot ---------------------------------------------------------------
+// iOS Safari/Chrome ignore user-scalable=no, so a double-tap or pinch could
+// zoom the page with no way back, hiding half the controls. Kill both:
+// gesture events cover pinch, the touchend guard covers double-tap (inputs
+// are exempt so text fields still focus normally).
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
+let _lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - _lastTouchEnd < 350 && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
+    e.preventDefault();
+  }
+  _lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener('dblclick', (e) => e.preventDefault());
+
 buildAvatars();
 buildShapes();
 show('home');
