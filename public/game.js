@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=39';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=40';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -235,12 +235,12 @@ $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTi
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
 $('seekersInput').addEventListener('change', () => socket.emit('settings', { seekers: +$('seekersInput').value }));
 $('botsInput').addEventListener('change', () => socket.emit('settings', { bots: +$('botsInput').value }));
-$('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value === 'on' }));
+$('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value }));
 
 function renderLobby() {
   $('lobbyCode').textContent = snap.code;
   const isHost = snap.hostId === myId;
-  $('playerCount').textContent = `(${snap.players.length}/12)`;
+  $('playerCount').textContent = `(${snap.players.length}/10)`;
   $('playerList').innerHTML = snap.players.map((p) => `
     <li><span class="pemoji">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span>
     ${p.isBot ? '<span class="tagbadge bot">BOT</span>' : ''}
@@ -257,7 +257,7 @@ function renderLobby() {
     $('roundsInput').value = snap.settings.rounds;
     $('seekersInput').value = snap.settings.seekers || 1;
     $('botsInput').value = snap.settings.bots || 0;
-    $('whistleSelect').value = snap.settings.whistle === false ? 'off' : 'on';
+    $('whistleSelect').value = snap.settings.whistle || 'auto';
   }
 }
 
@@ -1822,6 +1822,28 @@ function sendSeek() {
 //  - shots go through the server ('botshoot') with the normal 3s reload.
 // Host migration hands the AI to the next client automatically.
 const botSim = new Map();   // bot id → simulation state
+
+// Deterministic personality per bot id: every Botty hunts differently —
+// pace, eyesight, patience (idle scans), reaction time, and how precisely
+// they localise a whistle. Hashing the id means every client that ever
+// hosts this bot gives it the SAME character, with no syncing.
+function botTrait(id, salt) {
+  let h = 2166136261;
+  const str = id + ':' + salt;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 8) % 1000) / 1000;
+}
+function botTraits(id) {
+  return {
+    speed: 0.72 + botTrait(id, 'spd') * 0.33,       // 0.72–1.05× of the tuned pace
+    sight: 0.75 + botTrait(id, 'sight') * 0.55,     // short- vs eagle-eyed
+    pauseChance: 0.25 + botTrait(id, 'pc') * 0.5,   // how often it stops to scan
+    pauseMs: 700 + botTrait(id, 'pm') * 1600,       // how long the scan lasts
+    reactMs: 150 + botTrait(id, 're') * 600,        // spotting → giving chase
+    earJitter: 1 + botTrait(id, 'ear') * 2.5,       // whistle localisation error (m)
+  };
+}
+
 function updateBotSeekers(dt) {
   const hosting = snap && snap.phase === 'hunt' && snap.hostId === myId;
   if (!hosting) { if (botSim.size) botSim.clear(); return; }
@@ -1836,15 +1858,18 @@ function updateBotSeekers(dt) {
     let s = botSim.get(bb.id);
     if (!s) {
       s = { x: bb.x, y: bb.y || 0, z: bb.z, ry: bb.ry || 0, target: null, mode: 'patrol',
-            lastSeen: null, senseAt: 0, sendAt: 0, shotAt: now, stuck: { x: bb.x, z: bb.z, t: 0 } };
+            lastSeen: null, senseAt: 0, sendAt: 0, shotAt: now, idleUntil: 0, reactUntil: 0,
+            traits: botTraits(bb.id), stuck: { x: bb.x, z: bb.z, t: 0 } };
       botSim.set(bb.id, s);
     }
+    const T = s.traits;
     // ---- Sense (every 150ms — LOS raycasts aren't free) ----
     if (now >= s.senseAt) {
       s.senseAt = now + 150;
+      const hadPrey = !!s.prey;
       s.prey = null;
       let pd = Infinity;
-      const SIGHT = 3.4 * cs;
+      const SIGHT = 3.4 * cs * T.sight;
       for (const h of snap.bodies) {
         if (h.seeker || h.found) continue;
         const dx = h.x - s.x, dz = h.z - s.z;
@@ -1861,7 +1886,9 @@ function updateBotSeekers(dt) {
         if (collisionMeshes.length && _rc.intersectObjects(collisionMeshes, true).length) continue;
         s.prey = { x: h.x, z: h.z }; pd = d;
       }
-      if (s.prey) { s.mode = 'chase'; s.lastSeen = { ...s.prey }; }
+      if (s.prey && !hadPrey) s.reactUntil = now + T.reactMs;   // "…wait, was that—?"
+      if (s.prey && now < s.reactUntil) s.prey = null;          // still processing
+      if (s.prey) { s.mode = 'chase'; s.lastSeen = { ...s.prey }; s.idleUntil = 0; }
       else if (s.mode === 'chase') { s.mode = 'investigate'; s.target = s.lastSeen; }
       // Point-blank + reloaded → fire (server re-validates the reload).
       if (s.prey && pd < 1.25 && now - s.shotAt >= 3050) {
@@ -1869,12 +1896,21 @@ function updateBotSeekers(dt) {
         socket.emit('botshoot', { id: bb.id, x: s.prey.x, z: s.prey.z });
       }
     }
+    // ---- Idle scan: some bots stop and look around between rooms, which is
+    // exactly the opening a hider needs to relocate. ----
+    if (!s.prey && now < s.idleUntil) {
+      s.ry += dt * 1.3;   // slow turn on the spot
+      if (now - s.sendAt > 110) { s.sendAt = now; socket.emit('botmove', { id: bb.id, x: s.x, y: s.y, z: s.z, ry: s.ry }); }
+      continue;
+    }
     // ---- Steer ----
     let tx, tz;
     if (s.prey) { tx = s.prey.x; tz = s.prey.z; }
     else {
       if (s.whistle) { s.target = s.whistle; s.whistle = null; s.mode = 'investigate'; }
       if (!s.target || Math.hypot(s.target.x - s.x, s.target.z - s.z) < 0.7) {
+        // Arrived: maybe pause for a scan (per-personality), then move on.
+        if (s.target && Math.random() < T.pauseChance) s.idleUntil = now + T.pauseMs;
         const t = pts[Math.floor(Math.random() * pts.length)];
         s.target = {
           x: clamp(t[0] + (Math.random() * 3 - 1.5), bnd.minX, bnd.maxX),
@@ -1887,7 +1923,7 @@ function updateBotSeekers(dt) {
     // ---- Move with the players' collision rules ----
     const dx = tx - s.x, dz = tz - s.z, d = Math.hypot(dx, dz);
     if (d > 0.06) {
-      const spd = MOVE_SPEED * cs * 0.85;   // a touch slower than a human seeker
+      const spd = MOVE_SPEED * cs * 0.85 * T.speed;
       let nx = clamp(s.x + (dx / d) * spd * dt, bnd.minX, bnd.maxX);
       let nz = clamp(s.z + (dz / d) * spd * dt, bnd.minZ, bnd.maxZ);
       [nx, nz] = slideMove(s.x, s.z, nx, nz, (s.y || 0) + 0.25 * cs, 0.15 * cs, (s.y || 0) + 0.5 * cs);
@@ -2111,7 +2147,8 @@ function updateActionButtons() {
   const seekerHunt = snap && snap.phase === 'hunt' && snap.myRole === 'seeker';
   const jv = canMove || seekerHunt;
   const cv = canMove && (nearSurface || climbing);
-  const wv = canMove && snap.phase === 'hunt' && snap.settings && snap.settings.whistle;
+  const wmode = (snap.settings && snap.settings.whistle) || 'auto';
+  const wv = canMove && snap.phase === 'hunt' && wmode !== 'off';
   const zv = canZoom();
   if (jv !== _jumpVis) { _jumpVis = jv; $('jumpBtn').classList.toggle('hidden', !jv); }
   if (cv !== _climbVis) { _climbVis = cv; $('clingBtn').classList.toggle('hidden', !cv); }
@@ -2119,7 +2156,8 @@ function updateActionButtons() {
   if (wv !== _whisVis) {
     _whisVis = wv;
     $('whistleBtn').classList.toggle('hidden', !wv);
-    $('whistleMeter').classList.toggle('hidden', !wv);
+    // The countdown meter only means something with the AUTO whistle.
+    $('whistleMeter').classList.toggle('hidden', !(wv && wmode === 'auto'));
   }
   if (seekerHunt !== _fireVis) {
     _fireVis = seekerHunt;
@@ -2788,8 +2826,17 @@ function renderGame() {
       else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
     } else if (phase === 'hunt') {
       if (role === 'seeker') showBanner('🔫', 'GO SEEK!', 'Shoot to catch — reloading takes a moment, so aim well!', 'seeker');
-      else showBanner('🙈', 'HOLD STILL!', 'Stay painted! A brave manual whistle earns +10 points.', 'hider');
-      if (role === 'hider') myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
+      else {
+        const wm = (snap.settings && snap.settings.whistle) || 'auto';
+        const hint = wm === 'manual' ? 'No auto-whistle — a brave manual whistle earns +30!'
+          : wm === 'off' ? 'Silent mode — stay painted and stay still!'
+          : 'Stay painted! A brave manual whistle earns +10 points.';
+        showBanner('🙈', 'HOLD STILL!', hint, 'hider');
+      }
+      // The countdown only runs in AUTO mode (manual/off never auto-betray).
+      if (role === 'hider' && ((snap.settings && snap.settings.whistle) || 'auto') === 'auto') {
+        myWhistleDeadline = Date.now() + WHISTLE_EVERY_MS;
+      }
     } else if (phase === 'roundover') {
       // The signature reveal: overview first, then a guided close-up tour of
       // every hiding spot (see buildRevealTour), then the scoreboard.
@@ -3106,8 +3153,13 @@ socket.on('whistle', ({ id, x, y, z, auto, bonus }) => {
   } else if (snap && snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) {
     addWhistleCue(id, x, z);
   }
-  // Bot seekers (host-driven) head for the sound.
-  for (const [, s] of botSim) s.whistle = { x, z };
+  // Bot seekers (host-driven) head for the sound — each localises it with
+  // its own error, so they don't all converge on the exact spot.
+  for (const [, s] of botSim) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * ((s.traits && s.traits.earJitter) || 1.5);
+    s.whistle = { x: x + Math.sin(a) * r, z: z + Math.cos(a) * r };
+  }
 });
 
 // Directional whistle cues: one arrow PER whistling hider orbits the

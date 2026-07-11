@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import { RoomStore, POSES, clampToRoom, WHISTLE_EVERY } from './rooms.js';
+import { RoomStore, POSES, clampToRoom, WHISTLE_EVERY, HUNT_PER_HIDER, MAX_PLAYERS } from './rooms.js';
 import { spawnPoints } from '../shared/maps.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -76,17 +76,32 @@ function enterPrep(room) {
 // Bot hiders walk to a random (known-walkable) spawn spot during prep and
 // strike a pose there. Hiders are invisible to everyone during prep, so the
 // walk needs no broadcasting — only the server state matters at hunt start.
-const BOT_POSES = ['standing', 'head', 'cheer', 'zombie', 'kneel', 'flat', 'ball', 'star'];
+// Each bot has a hiding STYLE (hashed from its id, a stable personality):
+// sneaky bots favour silhouette-breaking ground poses and stray further off
+// the spawn spot; bolder ones stand about closer to the open areas.
+const BOT_POSES_SNEAKY = ['flat', 'ball', 'star', 'kneel'];
+const BOT_POSES_BOLD = ['standing', 'head', 'cheer', 'zombie'];
+function botHash(id, salt) {
+  let h = 2166136261;
+  const str = id + ':' + salt;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 8) % 1000) / 1000;
+}
 function startBotHiding(room) {
   stopBots(room);
   const bots = room.activePlayers().filter((p) => p.isBot && p.role === 'hider');
   if (!bots.length) return;
   const pts = spawnPoints(room.map);
   for (const b of bots) {
+    const sneaky = botHash(b.id, 'sneak');            // 0 = showoff, 1 = ninja
+    const wander = 1 + sneaky * 2.5;                  // sneaks stray further off-spot
     const t = pts[Math.floor(Math.random() * pts.length)];
-    const [tx, tz] = clampToRoom(room.map, t[0] + (Math.random() * 3 - 1.5), t[2] + (Math.random() * 3 - 1.5));
+    const [tx, tz] = clampToRoom(room.map,
+      t[0] + (Math.random() * 2 - 1) * wander,
+      t[2] + (Math.random() * 2 - 1) * wander);
     b.botTarget = { x: tx, z: tz };
-    b.botPose = BOT_POSES[Math.floor(Math.random() * BOT_POSES.length)];
+    const pool = Math.random() < sneaky ? BOT_POSES_SNEAKY : BOT_POSES_BOLD;
+    b.botPose = pool[Math.floor(Math.random() * pool.length)];
   }
   room._botTick = setInterval(() => {
     if (room.phase !== 'prep') { stopBots(room); return; }
@@ -151,15 +166,14 @@ function enterHunt(room) {
   clearTimer(room);
   stopBots(room);
   room.phase = 'hunt';
-  // Seek time scales with the group: huntTime is PER HIDER (45s default),
-  // so a seeker hunting 3 people gets 135s.
-  room.huntMs = room.settings.huntTime * 1000 * Math.max(1, room.hiders().length);
+  // Base seek time + extra per additional hider (100s + 30s each by default).
+  room.huntMs = (room.settings.huntTime + HUNT_PER_HIDER * Math.max(0, room.hiders().length - 1)) * 1000;
   room.deadline = Date.now() + room.huntMs;
   // Arm the auto-whistle: every hider betrays their position every 45s unless
   // they whistle manually first (which resets the countdown).
   const now = Date.now();
   for (const h of room.hiders()) h.nextWhistle = now + WHISTLE_EVERY;
-  if (room.settings.whistle) {
+  if (room.settings.whistle === 'auto') {   // manual/off: no auto-whistle ticker
     room._whistler = setInterval(() => tickWhistles(room), 1000);
   }
   startPump(room);
@@ -261,7 +275,12 @@ io.on('connection', (socket) => {
     if (!r) return cb && cb({ ok: false, error: 'Room not found' });
     if (roomCode && roomCode !== r.code) cleanup(); // leave any previous room
     if (r.phase !== 'lobby') return cb && cb({ ok: false, error: 'Game already started' });
-    if (r.players.size >= 12) return cb && cb({ ok: false, error: 'Room is full' });
+    if (r.players.size >= MAX_PLAYERS) {
+      // Humans outrank bots: evict one bot to make room, else reject.
+      const bot = [...r.players.values()].find((p) => p.isBot);
+      if (bot) { r.removePlayer(bot.id); r.settings.bots = Math.max(0, (r.settings.bots || 0) - 1); }
+      else return cb && cb({ ok: false, error: 'Room is full' });
+    }
     roomCode = r.code;
     socket.join(r.code);
     r.addPlayer(socket.id, name, avatar, shape);
@@ -274,7 +293,7 @@ io.on('connection', (socket) => {
     if (!r || socket.id !== r.hostId || r.phase !== 'lobby') return;
     const s = r.settings;
     if (typeof patch.prepTime === 'number') s.prepTime = clamp(patch.prepTime, 10, 120);
-    if (typeof patch.huntTime === 'number') s.huntTime = clamp(patch.huntTime, 10, 120); // per hider
+    if (typeof patch.huntTime === 'number') s.huntTime = clamp(patch.huntTime, 30, 240); // base seconds
     if (typeof patch.rounds === 'number') s.rounds = clamp(patch.rounds, 1, 20);
     if (typeof patch.seekers === 'number') s.seekers = clamp(Math.round(patch.seekers), 1, 11);
     if (typeof patch.bots === 'number') {
@@ -283,7 +302,7 @@ io.on('connection', (socket) => {
     }
     if (patch.map) s.map = patch.map;
     if (patch.mode) s.mode = patch.mode;
-    if (typeof patch.whistle === 'boolean') s.whistle = patch.whistle;
+    if (['auto', 'manual', 'off'].includes(patch.whistle)) s.whistle = patch.whistle;
     broadcast(r);
   });
 
@@ -376,13 +395,15 @@ io.on('connection', (socket) => {
     if (!hit) io.to(socket.id).emit('miss', {});
   });
 
-  // Hider whistles on purpose (taunt) — betrays them now, but resets the 45s
-  // auto-whistle countdown AND earns bonus points (bravery pays). The bonus
-  // is rate-limited so it can't be farmed by spamming.
+  // Hider whistles on purpose (taunt) — betrays them now, and earns bonus
+  // points (bravery pays). In MANUAL mode there is no auto-whistle at all,
+  // so the voluntary betrayal is worth a lot more. Rate-limited so the
+  // bonus can't be farmed by spamming.
   socket.on('whistle', () => {
     const r = room();
     const p = me();
     if (!r || !p || p.role !== 'hider' || p.found || r.phase !== 'hunt') return;
+    if (r.settings.whistle === 'off') return;   // silent-hiding mode
     const now = Date.now();
     if (now - (p.lastWhistle || 0) < 2000) return;
     p.lastWhistle = now;
@@ -390,7 +411,7 @@ io.on('connection', (socket) => {
     let bonus = 0;
     if (now - (p.lastWhistleBonus || 0) >= 15000) {
       p.lastWhistleBonus = now;
-      bonus = 10;
+      bonus = r.settings.whistle === 'manual' ? 30 : 10;
       p.score += bonus;
       scheduleBroadcast(r);
     }

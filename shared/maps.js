@@ -180,6 +180,108 @@ export const MAPS = {
     ],
   },
 
+  // ---- The Loft: a second furnished apartment (different layout from The
+  // Flat) — same doll-house interior gameplay.
+  loft: {
+    id: 'loft',
+    name: 'The Loft',
+    // Probed footprint at fit 22: ~21 x 21m, enclosed by the model's own
+    // exterior walls; cap walls outside as a backstop, bounds just inside.
+    size: { x: 26, z: 26, h: 12 },
+    charScale: 1,
+    ground: '#8c9498',
+    sky: '#cfe2f1',
+    fog: { color: '#dcebf4', near: 26, far: 85 },
+    scenes: [
+      { file: 'apartment-floor-plan/source/apartment.glb', pos: [0, 0], fit: 22, collide: true },
+    ],
+    capWalls: [
+      { x: -11.3, len: 24 }, { x: 11.3, len: 24 },
+      { z: -11.3, len: 24 }, { z: 11.3, len: 24 },
+    ],
+    bounds: { minX: -10.5, maxX: 10.5, minZ: -10.2, maxZ: 10.5 },
+    roof: 2.2,
+    spawnRooms: [
+      [[-5, 0], [-6, -2], [-3, 2]],
+      [[0, -2], [0, 2], [1.5, 0]],
+      [[5, 0], [6, -2], [3, 2]],
+    ],
+  },
+
+  // ---- The Docks: a walled pirate harbour yard — crates, barrels, boats
+  // and palms (Kenney pirate kit). Dense clutter = lots of blend spots.
+  docks: {
+    id: 'docks',
+    name: 'The Docks',
+    size: { x: 30, z: 30, h: 10 },
+    charScale: 1.6,
+    ground: '#c2a97c',
+    sky: '#aed8f0',
+    fog: { color: '#cfe7f5', near: 24, far: 78 },
+    groundWalk: true,
+    kit: PIRATE,
+    perimeter: { model: 'wall', kit: TOWN },
+    models: [
+      { m: 'boat-row-large', pos: [0, -8], rot: 0.4 },
+      { m: 'tower-complete-small', pos: [-9, -9], s: 0.9, solid: true },
+      { m: 'cannon', pos: [5, -6], rot: -0.6 },
+      { m: 'flag-pirate', pos: [0, 0] },
+      { m: 'palm-straight', pos: [-10, 6] },
+      { m: 'palm-bend', pos: [9, 8] },
+      { m: 'cannon', pos: [-4, 9], rot: 2.2 },
+    ],
+    scatter: [
+      { kit: PIRATE, models: ['barrel', 'crate', 'crate-bottles'],
+        count: 26, seed: 11, area: [-13, -13, 13, 13], sMin: 0.9, sMax: 1.35, rotRandom: true },
+      { kit: PIRATE, models: ['barrel', 'crate'],
+        count: 10, seed: 13, area: [2, -13, 13, 13], sMin: 0.9, sMax: 1.3, rotRandom: true },
+      { kit: TOWN, models: ['tree', 'rock-large', 'rock-small'],
+        count: 6, seed: 12, area: [-13, -13, 13, 13], sMin: 0.8, sMax: 1.1, rotRandom: true },
+    ],
+    spawnRooms: [
+      [[-9, 0], [-6, -6], [-9, 7]],
+      [[0, 5], [0, -3], [3, 0]],
+      [[9, 0], [6, 6], [8, -6]],
+    ],
+  },
+
+  // ---- The Graveyard: a moody walled cemetery — crypt, headstones, pines
+  // and pumpkins (Kenney graveyard kit). Close fog keeps it tense.
+  graveyard: {
+    id: 'graveyard',
+    name: 'The Graveyard',
+    size: { x: 30, z: 30, h: 10 },
+    charScale: 1.6,
+    ground: '#4e6b46',
+    sky: '#8fa3c0',
+    fog: { color: '#9fb0c5', near: 18, far: 60 },
+    groundWalk: true,
+    kit: GRAVE,
+    perimeter: { model: 'wall', kit: TOWN },
+    models: [
+      { m: 'crypt-large', pos: [0, -9], solid: true },
+      { m: 'altar-stone', pos: [0, -4], s: 1.1 },
+      { m: 'lightpost-single', pos: [-5, -6] },
+      { m: 'lightpost-single', pos: [5, -6] },
+      { m: 'bench', pos: [-8, 2], rot: Math.PI / 2 },
+      { m: 'bench', pos: [8, 2], rot: -Math.PI / 2 },
+    ],
+    scatter: [
+      { kit: GRAVE, models: ['gravestone-cross', 'gravestone-bevel', 'gravestone-round',
+        'gravestone-broken', 'gravestone-wide', 'gravestone-decorative', 'cross-wood'],
+        count: 20, seed: 21, area: [-13, -13, 13, 13], sMin: 0.9, sMax: 1.25, rotRandom: true },
+      { kit: GRAVE, models: ['pine', 'pine-crooked'],
+        count: 8, seed: 22, area: [-13, -13, 13, 13], sMin: 0.9, sMax: 1.2, rotRandom: true },
+      { kit: GRAVE, models: ['pumpkin', 'coffin', 'cross-column'],
+        count: 7, seed: 23, area: [-13, -13, 13, 13], sMin: 0.9, sMax: 1.2, rotRandom: true },
+    ],
+    spawnRooms: [
+      [[-9, 0], [-6, -6], [-9, 7]],
+      [[0, 5], [0, -2], [3, 1]],
+      [[9, 0], [6, 6], [8, -6]],
+    ],
+  },
+
   grounds: {
     id: 'grounds',
     name: 'The Grounds',

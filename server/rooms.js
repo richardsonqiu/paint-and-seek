@@ -21,17 +21,24 @@ export { POSES };
 
 export const DEFAULT_SETTINGS = {
   prepTime: 30,     // hide phase
-  huntTime: 45,     // seek time PER HIDER — 3 hiders = 135s of hunting
+  huntTime: 100,    // BASE seek time; +HUNT_PER_HIDER s per extra hider
   map: DEFAULT_MAP_ID,
   mode: 'classic', // 'classic' | 'infection'
   rounds: 3,       // bumped up at start so every player seeks at least once
   seekers: 1,      // seekers per round; everyone else hides
-  bots: 0,         // bot hiders (great for solo play)
-  whistle: true,   // hiders auto-whistle every 30s (manual whistle resets it)
+  bots: 0,         // bots hide AND take seeker turns
+  // 'auto': hiders auto-whistle every 30s, manual resets it (+10 bonus)
+  // 'manual': NO auto-whistle — a brave manual whistle earns a big +30
+  // 'off': silent hiding, no whistles at all
+  whistle: 'auto',
 };
 
 export const SEEKER_HP = 5;       // missed shots cost health — no spam-shooting
 export const WHISTLE_EVERY = 30000;
+export const HUNT_PER_HIDER = 30; // extra seek seconds per hider beyond the first
+// Room size: 10 participants total (humans + bots). Bigger lobbies outgrow
+// the maps' spawn groups and melt low-end phones (a paint texture per hider).
+export const MAX_PLAYERS = 10;
 
 function blankBody(spawn) {
   return {
@@ -87,7 +94,9 @@ export class Room {
   }
 
   // Keep exactly `n` bots in the room (host adjusts this in the lobby).
+  // Humans always have priority for the MAX_PLAYERS seats.
   syncBots(n) {
+    n = Math.max(0, Math.min(n, MAX_PLAYERS - this.humans().length));
     const bots = [...this.players.values()].filter((p) => p.isBot);
     for (let i = bots.length; i < n; i++) {
       this._botSeq = (this._botSeq || 0) + 1;
