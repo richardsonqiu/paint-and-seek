@@ -27,7 +27,7 @@
 // Mannequin poses (matching the Meccha Chameleon figure set): break the
 // humanoid silhouette to imitate props. 'climb' is the wall-flatten
 // ("picture frame trick").
-export const POSES = ['standing', 'cheer', 'head', 'zombie', 'kneel', 'flat', 'ball', 'star', 'climb'];
+export const POSES = ['standing', 'cheer', 'head', 'zombie', 'kneel', 'curl', 'flat', 'ball', 'star', 'climb'];
 
 const TOWN = 'kenney_fantasy-town-kit_2.0';
 const PLAT = 'kenney_platformer-kit';

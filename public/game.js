@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=44';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=45';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -617,6 +617,7 @@ function buildCapWall(group, map, spec) {
   }));
   wall.position.set(px, h / 2, pz);
   wall.castShadow = true; wall.receiveShadow = true;
+  wall.userData.noCling = true;   // boundary walls are not climbable scenery
   group.add(wall);
   try { wall.geometry.computeBoundsTree(); } catch (_) {}
   collisionMeshes.push(wall);
@@ -748,6 +749,7 @@ function placeWallSeg(group, proto, scale, x, baseY, z, rotY) {
   // only a legacy camera fallback. Without this, walls didn't block walking.
   inst.traverse((o) => {
     if (o.isMesh) {
+      o.userData.noCling = true;   // boundary/divider walls aren't climbable
       try { if (!o.geometry.boundsTree) o.geometry.computeBoundsTree(); } catch (_) {}
       collisionMeshes.push(o);
     }
@@ -982,6 +984,14 @@ function setPose(g, pose) {
       // beside the torso instead of vanishing into it.
       j.legL.rotation.set(-1.9, 0, -0.35); j.legR.rotation.set(-1.9, 0, 0.35);
       j.armL.rotation.set(0.3, 0, -0.2); j.armR.rotation.set(0.3, 0, 0.2);
+      g.userData.baseY = D.kneelY * S;
+      break;
+    case 'curl':                      // face-down fetal tuck (child's pose)
+      // Fold the torso right over the knees, head to the floor; arms hug
+      // the sides. Reads as a pebble/bundle from behind.
+      j.upper.rotation.x = 1.35;
+      j.legL.rotation.set(-1.9, 0, -0.3); j.legR.rotation.set(-1.9, 0, 0.3);
+      j.armL.rotation.set(-0.7, 0, -0.25); j.armR.rotation.set(-0.7, 0, 0.25);
       g.userData.baseY = D.kneelY * S;
       break;
     case 'flat':                      // lie flat on the back, straight
@@ -1584,7 +1594,12 @@ function detectSurface(p) {
   if (!collisionMeshes.length) return false;
   _ro.set(p.x, (p.y || 0) + 0.12, p.z); _rd.set(Math.sin(p.ry), 0, Math.cos(p.ry)).normalize();
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
-  const hit = _rc.intersectObjects(collisionMeshes, true)[0];
+  // Boundary/divider walls are noCling: their hollow builds let clingers
+  // snap INSIDE the wall (or through to the far side, out of the play area),
+  // and boundary walls shouldn't be hiding spots anyway. Rocks, furniture
+  // and building scenery stay climbable.
+  const hit = _rc.intersectObjects(collisionMeshes, true)
+    .find((h) => !h.object.userData.noCling);
   if (!hit) return false;
   let nx = _rd.x, nz = _rd.z;
   if (hit.face) {
@@ -1808,6 +1823,22 @@ function sendSeek() {
   });
 }
 
+// The server walks bot hiders to their spots without any geometry, so a bot
+// can end up wedged INSIDE a cabinet — unfindable and unfair. At hunt start
+// the host's client (which has the collision meshes) relocates any such bot
+// to the nearest clear floor spot, exactly like the player spawn fix.
+function fixBotHidingSpots() {
+  if (!snap || snap.phase !== 'hunt' || snap.hostId !== myId) return;
+  for (const b of (snap.bodies || [])) {
+    if (b.seeker || !b.id || !String(b.id).startsWith('bot-')) continue;
+    const [cx, cz] = findClearSpawn(b.x, b.z, 0.35);
+    const cy = surfaceTop(cx, cz) + 0.02;
+    if (Math.hypot(cx - b.x, cz - b.z) > 0.05 || Math.abs(cy - (b.y || 0)) > 0.25) {
+      socket.emit('bothide', { id: b.id, x: cx, y: cy, z: cz });
+    }
+  }
+}
+
 // ---- Host-driven bot seeker AI --------------------------------------------
 // The server has no level geometry, so the HOST's client simulates bot
 // seekers with the real collision meshes:
@@ -1877,8 +1908,9 @@ function updateBotSeekers(dt) {
         // Hiding pays: any non-standing pose halves the spot range.
         const sight = (h.pose && h.pose !== 'standing') ? SIGHT * 0.5 : SIGHT;
         if (d > sight || d >= pd) continue;
-        // Forward cone (~150°) unless practically touching.
-        if (d > 0.6 && (Math.sin(s.ry) * dx + Math.cos(s.ry) * dz) / (d || 1) < 0.25) continue;
+        // Forward cone (~150°) — but skip it at arm's reach: a hider RIGHT
+        // NEXT to the bot gets noticed no matter which way it faces.
+        if (d > 1.2 * cs && (Math.sin(s.ry) * dx + Math.cos(s.ry) * dz) / (d || 1) < 0.25) continue;
         // True line of sight through the level.
         _ro.set(s.x, (s.y || 0) + 0.9 * cs, s.z);
         _rd.set(dx, ((h.y || 0) + 0.3 * cs) - ((s.y || 0) + 0.9 * cs), dz).normalize();
@@ -2277,14 +2309,25 @@ setInterval(() => {
 // hide, where your body reads as decoration hung on the wall.
 function startClimb() {
   if (!nearSurface || !myBody) return;
-  climbing = true; climbMiss = 0;
   climbDir.x = surfaceDir.x; climbDir.z = surfaceDir.z;
   _ro.set(myBody.x, (myBody.y || 0) + 0.12, myBody.z); _rd.set(climbDir.x, 0, climbDir.z).normalize();
   _rc.set(_ro, _rd); _rc.far = CLING_RANGE;
-  const h = _rc.intersectObjects(collisionMeshes, true)[0];
-  if (h) { myBody.x = h.point.x - climbDir.x * CLING_GAP; myBody.z = h.point.z - climbDir.z * CLING_GAP; }
+  const h = _rc.intersectObjects(collisionMeshes, true).find((x) => !x.object.userData.noCling);
+  if (!h) return;
+  // Sanity-check the snap: never let a cling place you outside the play
+  // bounds or over the void (that hid players where seekers can't go).
+  const bx = h.point.x - climbDir.x * CLING_GAP;
+  const bz = h.point.z - climbDir.z * CLING_GAP;
+  const bnd = bounds();
+  if (bx < bnd.minX || bx > bnd.maxX || bz < bnd.minZ || bz > bnd.maxZ) return;
+  if (!hasFloor(bx, bz, myBody.y)) return;
+  climbing = true; climbMiss = 0;
+  myBody.x = bx; myBody.z = bz;
   myBody.ry = Math.atan2(climbDir.x, climbDir.z);  // face INTO the wall (eyes to the wall)
-  myBody.pose = 'climb';
+  // Any pose can attach — 'climb' (the picture-frame spread) is just the
+  // default when you cling while standing. Pick Ball first, cling second,
+  // and you hang there curled up.
+  if (!myBody.pose || myBody.pose === 'standing') myBody.pose = 'climb';
   syncPoseButtons();
   SFX.click();
   sendMove(true);
@@ -2876,6 +2919,9 @@ function renderGame() {
       if (role === 'hider') showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
       else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
     } else if (phase === 'hunt') {
+      // Host duty: the server placed bot hiders blind (it has no geometry),
+      // so nudge any bot that ended up inside furniture to clear floor.
+      if (snap.hostId === myId) setTimeout(fixBotHidingSpots, 400);
       if (role === 'seeker') showBanner('🔫', 'GO SEEK!', 'Shoot to catch — reloading takes a moment, so aim well!', 'seeker');
       else {
         const wm = (snap.settings && snap.settings.whistle) || 'auto';
@@ -3210,6 +3256,7 @@ socket.on('whistle', ({ id, x, y, z, auto, bonus }) => {
     const a = Math.random() * Math.PI * 2;
     const r = Math.random() * ((s.traits && s.traits.earJitter) || 1.5);
     s.whistle = { x: x + Math.sin(a) * r, z: z + Math.cos(a) * r };
+    s.idleUntil = 0;   // a sound interrupts the idle scan instantly
   }
 });
 

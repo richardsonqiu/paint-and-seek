@@ -79,7 +79,7 @@ function enterPrep(room) {
 // Each bot has a hiding STYLE (hashed from its id, a stable personality):
 // sneaky bots favour silhouette-breaking ground poses and stray further off
 // the spawn spot; bolder ones stand about closer to the open areas.
-const BOT_POSES_SNEAKY = ['flat', 'ball', 'star', 'kneel'];
+const BOT_POSES_SNEAKY = ['flat', 'ball', 'star', 'kneel', 'curl'];
 const BOT_POSES_BOLD = ['standing', 'head', 'cheer', 'zombie'];
 function botHash(id, salt) {
   let h = 2166136261;
@@ -430,6 +430,20 @@ io.on('connection', (socket) => {
     }
     if (typeof y === 'number') b.body.y = Math.max(-2, Math.min(20, y));
     if (typeof ry === 'number') b.body.ry = ry;
+    scheduleBroadcast(r);
+  });
+
+  // Host relocates a bot HIDER that the blind server placement wedged into
+  // furniture (the host's client has the real geometry).
+  socket.on('bothide', ({ id, x, y, z }) => {
+    const r = room();
+    if (!r || socket.id !== r.hostId || r.phase !== 'hunt') return;
+    const b = r.players.get(id);
+    if (!b || !b.isBot || b.role !== 'hider' || b.found) return;
+    if (typeof x !== 'number' || typeof z !== 'number') return;
+    const [cx, cz] = clampPlay(r.map, x, z);
+    b.body.x = cx; b.body.z = cz;
+    if (typeof y === 'number') b.body.y = Math.max(-2, Math.min(20, y));
     scheduleBroadcast(r);
   });
 
