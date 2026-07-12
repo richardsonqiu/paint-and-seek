@@ -366,6 +366,23 @@ export const MAPS = {
 
 export const DEFAULT_MAP_ID = 'rooms';
 
+// Round twists. 'none' is plain rules; the others each bend one lever.
+export const MODIFIERS = {
+  none: { name: 'Classic', icon: '🎲', desc: 'No twist — pure hide & seek.' },
+  tiny: { name: 'Tiny Hiders', icon: '🐜', desc: 'Hiders shrink to 2/3 size — harder to spot, easier to tuck away.' },
+  disco: { name: 'Disco Fever', icon: '🪩', desc: 'The sun cycles colours all round — camouflage keeps shifting.' },
+  quickdraw: { name: 'Quickdraw', icon: '⚡', desc: 'Seekers reload in 1.2s — fast guns, fast mistakes.' },
+};
+
+// Daily featured combo: same (map, twist) for every player on a given date —
+// a shared "today's special" the lobby banner offers with one tap.
+export function dailyFeatured(now = new Date()) {
+  const day = Math.floor(now.getTime() / 86400000);
+  const maps = Object.keys(MAPS);
+  const mods = Object.keys(MODIFIERS).filter((m) => m !== 'none');
+  return { mapId: maps[day % maps.length], modifier: mods[day % mods.length] };
+}
+
 export const MAP_LIST = Object.values(MAPS).map((m) => ({ id: m.id, name: m.name }));
 
 // Spawn points grouped by room: returns an array of rooms, each an array of

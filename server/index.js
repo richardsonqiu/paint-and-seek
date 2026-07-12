@@ -42,6 +42,9 @@ app.post('/dev/snapshot', express.json({ limit: '4mb' }), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 const RELOAD_MS = 3000;   // paint-gun reload; shots themselves are free
+// The 'quickdraw' twist swaps the reload for a snappy one — room-dependent.
+const reloadFor = (room) => (room.settings.modifier === 'quickdraw' ? 1200 : RELOAD_MS);
+const MODIFIERS = ['none', 'tiny', 'disco', 'quickdraw'];
 
 // ---- Phase engine -------------------------------------------------------
 
@@ -166,12 +169,34 @@ function resolveShot(room, shooter, x, y, z, color) {
     const d = Math.hypot(h.body.x - x, h.body.z - z);
     if (d < best) { best = d; hit = h; }
   }
-  if (!hit) return null;
+  if (!hit) {
+    // No real hider in the blast — did they fall for a decoy? Popping one
+    // jams the gun (+2s on top of the reload) and pays the decoy's owner.
+    let dec = null, db = 1.4;
+    for (const d of room.decoys || []) {
+      const dd = Math.hypot(d.x - x, d.z - z);
+      if (dd < db) { db = dd; dec = d; }
+    }
+    if (dec) {
+      room.decoys = room.decoys.filter((d) => d !== dec);
+      const owner = room.players.get(dec.owner);
+      if (owner) owner.score += 15;
+      shooter.lastShot = Date.now() + 2000;
+      io.to(room.code).emit('decoypop', {
+        x: dec.x, y: dec.y, z: dec.z,
+        byId: shooter.id, by: shooter.name, ownerId: dec.owner, owner: dec.ownerName,
+      });
+      scheduleBroadcast(room);
+      return { decoy: true };
+    }
+    return null;
+  }
   hit.found = true;
   const huntMs = room.huntMs || room.settings.huntTime * 1000;
   const msLeft = Math.max(0, room.deadline - Date.now());
   shooter.score += 60 + Math.round((msLeft / huntMs) * 40);
   hit.score += Math.round(((huntMs - msLeft) / huntMs) * 50);
+  (room._catches ||= []).push({ by: shooter.name, dt: (Date.now() - (room.huntStartAt || Date.now())) / 1000 });
   if (room.settings.mode === 'infection') { hit.role = 'seeker'; hit.found = false; }
   io.to(room.code).emit('tagged', { id: hit.id, name: hit.name, by: shooter.name });
   broadcast(room);
@@ -197,7 +222,31 @@ function enterHunt(room) {
   broadcast(room);
   // Bot seekers: arm their reload; the host's client drives their movement.
   for (const p of room.activePlayers()) if (p.isBot && p.role === 'seeker') p.lastShot = now;
+  room.huntStartAt = now;                 // catch times for the round awards
+  room._danger = setInterval(() => tickDanger(room), 1000);
   room._timer = setTimeout(() => endRound(room, 'time'), room.huntMs);
+}
+
+// Danger pay: hiding is braver the closer the hunter prowls. Every second a
+// hider spends within DANGER_RADIUS of an active seeker earns +2 — rewarding
+// bold spots over corner-camping. The affected ids ride the snapshot so the
+// client can show a "danger pay" chip.
+const DANGER_RADIUS = 5;   // metres, scaled by the map's character scale
+function tickDanger(room) {
+  if (room.phase !== 'hunt') return;
+  const rad = DANGER_RADIUS * (room.map.charScale || 1);
+  const seekers = room.activeSeekers();
+  const ids = new Set();
+  for (const h of room.remainingHiders()) {
+    if (seekers.some((s) => Math.hypot(s.body.x - h.body.x, s.body.z - h.body.z) < rad)) {
+      h.score += 2;
+      h.dangerSecs = (h.dangerSecs || 0) + 1;
+      ids.add(h.id);
+    }
+  }
+  const changed = ids.size || (room._dangerIds && room._dangerIds.size);
+  room._dangerIds = ids;
+  if (changed) scheduleBroadcast(room);
 }
 
 function tickWhistles(room) {
@@ -214,6 +263,8 @@ function tickWhistles(room) {
 function endRound(room, reason) {
   clearTimer(room);
   if (room._whistler) { clearInterval(room._whistler); room._whistler = null; }
+  if (room._danger) { clearInterval(room._danger); room._danger = null; }
+  room._dangerIds = new Set();
   stopBots(room);
   stopPump(room);
   room.phase = 'roundover';
@@ -231,6 +282,15 @@ function endRound(room, reason) {
   if (allFound) {
     for (const s of room.seekers()) s.score += 100;
   }
+
+  // Round awards for the scoreboard: the survivor who toughed out the most
+  // danger-pay seconds, and the quickest catch of the round.
+  const daring = [...survivors].sort((a, b) => (b.dangerSecs || 0) - (a.dangerSecs || 0))[0];
+  const fastest = [...(room._catches || [])].sort((a, b) => a.dt - b.dt)[0];
+  room.lastAwards = {
+    sneakiest: daring ? { name: daring.name, secs: daring.dangerSecs || 0 } : null,
+    fastestCatch: fastest ? { name: fastest.by, secs: Math.max(1, Math.round(fastest.dt)) } : null,
+  };
 
   // No auto-advance: the reveal + scoreboard stay up until EVERY player has
   // pressed Next (readiness is re-checked when someone leaves, too). Bots
@@ -320,6 +380,7 @@ io.on('connection', (socket) => {
     if (patch.map) s.map = patch.map;
     if (patch.mode) s.mode = patch.mode;
     if (['auto', 'manual', 'off'].includes(patch.whistle)) s.whistle = patch.whistle;
+    if (MODIFIERS.includes(patch.modifier)) s.modifier = patch.modifier;
     broadcast(r);
   });
 
@@ -404,7 +465,7 @@ io.on('connection', (socket) => {
     if (!r || !p || p.role !== 'seeker' || r.phase !== 'hunt' || !data) return;
     if (typeof data.x !== 'number' || typeof data.z !== 'number') return;
     const now = Date.now();
-    if (now - (p.lastShot || 0) < RELOAD_MS - 150) return; // small grace for latency
+    if (now - (p.lastShot || 0) < reloadFor(r) - 150) return; // small grace for latency
     p.lastShot = now;
     const color = (typeof data.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.color)) ? data.color : '#ff3bd0';
     const y = typeof data.y === 'number' ? data.y : 0.5;
@@ -471,7 +532,7 @@ io.on('connection', (socket) => {
     if (!b || !b.isBot || b.role !== 'seeker') return;
     if (typeof x !== 'number' || typeof z !== 'number') return;
     const now = Date.now();
-    if (now - (b.lastShot || 0) < RELOAD_MS - 150) return; // same reload as humans
+    if (now - (b.lastShot || 0) < reloadFor(r) - 150) return; // same reload as humans
     b.lastShot = now;
     resolveShot(r, b, x, 0.5, z, '#ff3bd0');
   });
@@ -507,6 +568,24 @@ io.on('connection', (socket) => {
     const p = me();
     if (!r || !p) return;
     io.to(r.code).emit('emote', { id: socket.id, name: p.name, emoji });
+  });
+
+  // Hider plants their one decoy of the round: a frozen copy of their body
+  // (paint, pose, shape) at their CURRENT spot — then they sneak elsewhere.
+  // Seekers (and bot seekers) see it exactly like a real hider.
+  socket.on('decoy', () => {
+    const r = room();
+    const p = me();
+    if (!r || !p || p.role !== 'hider' || p.found || p.decoyUsed) return;
+    if (r.phase !== 'prep' && r.phase !== 'hunt') return;
+    p.decoyUsed = true;
+    r.decoys.push({
+      id: 'decoy-' + p.id,
+      x: p.body.x, y: p.body.y || 0, z: p.body.z, ry: p.body.ry || 0,
+      pose: p.body.pose || 'standing', paint: p.body.paint, shape: p.shape,
+      owner: p.id, ownerName: p.name,
+    });
+    broadcast(r);
   });
 
   socket.on('leave', () => cleanup());

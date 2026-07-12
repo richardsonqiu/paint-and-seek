@@ -31,6 +31,9 @@ export const DEFAULT_SETTINGS = {
   // 'manual': NO auto-whistle — a brave manual whistle earns a big +30
   // 'off': silent hiding, no whistles at all
   whistle: 'auto',
+  // Round twist: 'none' | 'tiny' (hiders ~2/3 size) | 'disco' (colour-cycling
+  // light — camouflage keeps shifting) | 'quickdraw' (1.2s seeker reload)
+  modifier: 'none',
 };
 
 export const SEEKER_HP = 5;       // missed shots cost health — no spam-shooting
@@ -63,6 +66,8 @@ export class Room {
     this._timer = null;
     this.totalRounds = this.settings.rounds;
     this.seekerQueue = [];  // ids yet to take a seeker turn this cycle
+    this.decoys = [];       // planted fake hiders (one per hider per round)
+    this.lastAwards = null; // round MVPs, shown on the scoreboard
   }
 
   addPlayer(id, name, avatar, shape) {
@@ -189,11 +194,17 @@ export class Room {
       p.hp = SEEKER_HP;            // seekers lose 1 per missed shot
       p.out = false;               // seeker eliminated by too many misses
       p.nextWhistle = 0;           // hider auto-whistle deadline (set at hunt start)
+      p.decoyUsed = false;         // one decoy per hider per round
+      p.dangerSecs = 0;            // seconds spent near a seeker (danger pay)
       const spawn = p.role === 'seeker'
         ? seekerSpawns[si++ % seekerSpawns.length]
         : hiderSpawns[hi++ % hiderSpawns.length];
       p.body = blankBody(spawn);
     });
+    this.decoys = [];
+    this._catches = [];            // {by, dt} per catch, for the round awards
+    this._dangerIds = new Set();
+    this.lastAwards = null;
   }
 
   remainingHiders() {
@@ -263,6 +274,12 @@ export class Room {
       myId: forId,
       myBody: me ? me.body : null, // both roles get a server-assigned spawn
       bodies,
+      // Planted decoys render like hiders on every client (that's the point);
+      // hidden in the lobby only.
+      decoys: this.phase === 'lobby' ? [] : this.decoys,
+      // Hiders currently earning danger pay (a seeker is prowling close).
+      dangerIds: this.phase === 'hunt' ? [...(this._dangerIds || [])] : [],
+      awards: this.phase === 'roundover' ? this.lastAwards : null,
       spectating,
       dots,
       remaining: this.remainingHiders().length,
@@ -312,6 +329,7 @@ export class RoomStore {
     if (room && room._whistler) clearInterval(room._whistler);
     if (room && room._pump) clearInterval(room._pump);
     if (room && room._botTick) clearInterval(room._botTick);
+    if (room && room._danger) clearInterval(room._danger);
     this.rooms.delete(code);
   }
 }

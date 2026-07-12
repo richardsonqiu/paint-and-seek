@@ -368,6 +368,53 @@ input[type="range"] {
 .mc-badge.d3 { background: #ffd2cc; color: #99231a; }
 .mc-badge.size { background: #d9ecfb; color: #1c5e8f; }
 .map-card .mc-blurb { font-size: 11px; color: #6b6353; padding: 0 8px 8px; line-height: 1.35; }
+
+/* ---- Daily featured banner ---------------------------------------------- */
+.featured-banner {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  background: linear-gradient(100deg, #ffe9a8, #ffd6ef);
+  border: 3px solid rgba(58, 44, 26, .35); border-radius: 14px; padding: 10px 12px;
+  box-shadow: 0 3px 0 rgba(58, 44, 26, .2);
+}
+.featured-banner .fb-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.featured-banner .fb-text b { font-size: 12px; letter-spacing: .04em; color: #8a5a00; }
+.featured-banner .fb-text span { font-weight: 800; color: var(--ink); font-size: 14px; }
+.featured-banner .btn { flex: 0 0 auto; padding: 8px 14px; }
+
+/* ---- Danger pay chip ------------------------------------------------------ */
+.danger-chip {
+  position: absolute; top: calc(env(safe-area-inset-top, 0px) + 68px); left: 50%;
+  transform: translateX(-50%); z-index: 7; pointer-events: none;
+  background: #ff8a3c; color: #fff; font-weight: 900; font-size: 12.5px;
+  border: 2.5px solid rgba(58, 44, 26, .5); border-radius: 99px; padding: 5px 14px;
+  animation: dangerPulse .8s ease-in-out infinite;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .25);
+}
+@keyframes dangerPulse { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.08); } }
+
+/* ---- Endgame heartbeat vignette ------------------------------------------ */
+.heart-vignette {
+  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  box-shadow: inset 0 0 110px 30px rgba(255, 60, 60, .5);
+  animation: heartPulse 1s ease-in-out infinite;
+}
+@keyframes heartPulse { 0%, 100% { opacity: .25; } 18% { opacity: .8; } 32% { opacity: .35; } 46% { opacity: .7; } }
+
+/* ---- Scan pulse button (seeker) ------------------------------------------ */
+/* Seeker-only: takes the cling button's slot (that one is hider-only). */
+.action-btn.scan { right: 22px; bottom: calc(200px + var(--safe-b)); background: linear-gradient(180deg, #b8ecff, #58c9f0); }
+.action-btn.scan:disabled { opacity: .45; filter: grayscale(.6); }
+
+/* ---- Round awards on the scoreboard --------------------------------------- */
+.awards { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+.awards .award {
+  background: #fff6d8; border: 2.5px solid rgba(58, 44, 26, .3); border-radius: 12px;
+  font-size: 13px; padding: 7px 12px; font-weight: 700; color: var(--ink);
+}
+
+/* Emotes must ride ABOVE the reveal scoreboard (post-round banter). */
+.emote-toggle, .emote-bar { z-index: 30; }
+.emote-float { z-index: 31; }
 .overlay-inner.card { max-height: 82vh; overflow-y: auto; }
 .overlay-inner h2 { color: #fffdf3; text-shadow: 0 3px 0 #3a2c1a, -1.5px -1.5px 0 #3a2c1a, 1.5px -1.5px 0 #3a2c1a, -1.5px 1.5px 0 #3a2c1a, 1.5px 1.5px 0 #3a2c1a; font-size: 28px; }
 .overlay-inner.card h2 { color: var(--ink); text-shadow: none; }
@@ -588,6 +635,7 @@ body.paint-mode .whistle-meter { display: none !important; }
   .action-btn.jump { bottom: calc(16px + var(--safe-b)); right: 16px; }
   .action-btn.blend { right: 92px; bottom: calc(28px + var(--safe-b)); width: 72px; height: 72px; }
   .action-btn.cling { bottom: calc(88px + var(--safe-b)); right: 16px; }
+  .action-btn.scan { bottom: calc(88px + var(--safe-b)); right: 16px; }
   .whistle-meter { right: 92px; bottom: calc(108px + var(--safe-b)); }
   .zoom-ctrls { left: 130px; bottom: calc(16px + var(--safe-b)); flex-direction: row; }
   .zoom-ctrls button { width: 42px; height: 42px; }

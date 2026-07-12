@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=47" />
+  <link rel="stylesheet" href="/style.css?v=48" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -112,6 +112,10 @@
     </div>
     <div id="hostSettings" class="card hidden">
       <h2>Settings</h2>
+      <div id="featuredBanner" class="featured-banner">
+        <div class="fb-text"><b>🌟 Today's Featured</b><span id="featuredText"></span></div>
+        <button id="featuredApply" class="btn secondary">Play it</button>
+      </div>
       <div class="field map-field"><span>Map</span>
         <div id="mapPicker" class="map-picker"></div>
       </div>
@@ -134,6 +138,14 @@
           <option value="auto">Auto — hiders auto-whistle every 30s (+10 for manual)</option>
           <option value="manual">Manual only — no auto-whistle, brave whistles earn +30</option>
           <option value="off">Off — silent hiding</option>
+        </select>
+      </label>
+      <label class="field"><span>Twist</span>
+        <select id="modifierSelect">
+          <option value="none">🎲 None — classic rules</option>
+          <option value="tiny">🐜 Tiny Hiders — hiders shrink to 2/3 size</option>
+          <option value="disco">🪩 Disco Fever — colour-cycling lights</option>
+          <option value="quickdraw">⚡ Quickdraw — 1.2s seeker reload</option>
         </select>
       </label>
     </div>
@@ -222,6 +234,7 @@
     <div id="scoreOverlay" class="overlay hidden">
       <div class="overlay-inner card">
         <h2 id="scoreTitle">Round over</h2>
+        <div id="awardsRow" class="awards hidden"></div>
         <ul id="scoreList" class="player-list"></ul>
         <button id="nextBtn" class="btn primary big">▶ Next round</button>
         <button id="peekMapBtn" class="btn ghost">🗺 Look at the hiding spots</button>
@@ -247,6 +260,7 @@
     <div id="hiderTools" class="dock hidden">
       <button id="paintToggle" class="dock-btn"><span class="ic">🎨</span><span class="lbl">Paint</span></button>
       <button id="poseToggle" class="dock-btn"><span class="ic">🧍</span><span class="lbl">Pose</span></button>
+      <button id="decoyBtn" class="dock-btn" title="Plant a decoy copy of yourself (one per round)"><span class="ic">🪆</span><span class="lbl">Decoy</span></button>
     </div>
 
     <!-- Slim tool strips: one thumb-height row, translucent, out of the way -->
@@ -295,6 +309,15 @@
          per whistling hider, live-tracking as the camera pans -->
     <div id="whistleDirs" class="whistle-dirs"></div>
 
+    <!-- Scan pulse: once per round, hider echoes glow through the walls -->
+    <button id="scanBtn" class="action-btn scan hidden"><span class="ic">🛰️</span><span class="lbl">Scan</span></button>
+
+    <!-- Danger pay: shown to a hider while a seeker prowls close -->
+    <div id="dangerChip" class="danger-chip hidden">🔥 DANGER PAY +2/s</div>
+
+    <!-- Endgame heartbeat vignette (last 10 seconds of the hunt) -->
+    <div id="heartVignette" class="heart-vignette hidden"></div>
+
     <div id="emoteFloat" class="emote-float"></div>
     <div id="toast" class="toast hidden"></div>
     <div id="vignette" class="vignette hidden"></div>
@@ -320,6 +343,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=47"></script>
+  <script type="module" src="/game.js?v=48"></script>
 </body>
 </html>

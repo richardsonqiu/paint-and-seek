@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=47';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=48';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -119,6 +119,9 @@ const SFX = {
   splat: () => noise(0.18, { freq: 500, vol: 0.16 }),
   caught: () => { tone(520, 0.12, { vol: 0.12 }); tone(390, 0.12, { when: 0.11, vol: 0.12 }); tone(260, 0.22, { when: 0.22, vol: 0.12 }); },
   win: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, { type: 'triangle', when: i * 0.12 })); },
+  heartbeat: () => { tone(72, 0.09, { type: 'sine', vol: 0.3 }); tone(56, 0.12, { type: 'sine', when: 0.15, vol: 0.26 }); },
+  scan: () => tone(420, 0.45, { type: 'sine', vol: 0.1, slide: 900 }),
+  decoy: () => { tone(340, 0.1, { type: 'square', vol: 0.1 }); tone(220, 0.18, { type: 'square', when: 0.1, vol: 0.12, slide: -120 }); },
 };
 window.addEventListener('pointerdown', () => ac(), { once: true });
 
@@ -206,6 +209,7 @@ function quitGame() {
   climbing = false; seekerPeek = false;
   openSheet(null); setEmotesOpen(false); setQuitOpen(false);
   removeMyChar(); removeSeekerChar(); clearChars(); clearSplats(); syncBeacons([]);
+  syncDecoys([]); clearFootprints();
   show('home');
   SFX.click();
 }
@@ -267,6 +271,20 @@ function syncMapPicker(mapId) {
   for (const c of $('mapPicker').children) c.classList.toggle('selected', c.dataset.map === mapId);
 }
 $('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));
+$('modifierSelect').addEventListener('change', () => socket.emit('settings', { modifier: $('modifierSelect').value }));
+
+// Daily featured combo: same map + twist for everyone today, one-tap apply.
+function renderFeatured() {
+  const f = dailyFeatured();
+  const m = MAPS[f.mapId], mod = MODIFIERS[f.modifier];
+  if (!m || !mod) { $('featuredBanner').classList.add('hidden'); return; }
+  $('featuredText').textContent = `${m.name} × ${mod.icon} ${mod.name}`;
+  $('featuredApply').onclick = () => {
+    socket.emit('settings', { map: f.mapId, modifier: f.modifier });
+    SFX.click();
+    toast(`🌟 Featured on! ${m.name} with ${mod.name}`, 2000);
+  };
+}
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
@@ -290,6 +308,8 @@ function renderLobby() {
   if (isHost) {
     buildMapPicker();
     syncMapPicker(snap.settings.map);
+    renderFeatured();
+    $('modifierSelect').value = snap.settings.modifier || 'none';
     $('modeSelect').value = snap.settings.mode;
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
@@ -916,6 +936,12 @@ function eyeGeo() {
 // shoulder pivots for the arms) and hip-pivoted legs, so poses can bend at
 // the joints. Each player gets its own canvas/texture/material (per-player
 // paint) but shares the cached per-shape geometry.
+// The Tiny Hiders twist shrinks hider bodies (seekers keep their size — the
+// seeker scale is applied after build by makeSeekerLook).
+function hiderSizeMul() {
+  return snap && snap.settings && snap.settings.modifier === 'tiny' ? 0.65 : 1;
+}
+
 function buildCharacter(paintUrl, shape = 'egg') {
   if (!SHAPE_IDS.includes(shape)) shape = 'egg';
   const grp = new THREE.Group();
@@ -978,7 +1004,7 @@ function buildCharacter(paintUrl, shape = 'egg') {
     joints: { upper, armL, armR, legL, legR },
     paintMeshes,
     shape, dims: D,
-    scale: HIDER_SCALE * charScale(),
+    scale: HIDER_SCALE * charScale() * hiderSizeMul(),
   };
   if (paintUrl) applyPaintUrl(grp, paintUrl);
   return grp;
@@ -1248,6 +1274,14 @@ function updateRemoteAnims(dt, t) {
     if ((g.userData.pose || 'standing') === 'climb') continue;   // held on the wall
     const j = g.userData.joints;
     const speed = Math.hypot(g.position.x - px, g.position.z - pz) / Math.max(dt, 0.001);
+    // Sprinting hiders leave prints (a seeker's tracking clue).
+    if (snap && snap.phase === 'hunt' && !g.userData.isSeeker && speed > 1.2 * charScale()) {
+      const nowMs = performance.now();
+      if (nowMs - (g.userData.footAt || 0) > 320) {
+        g.userData.footAt = nowMs;
+        stampFootprint(g.position.x, g.position.z);
+      }
+    }
     if (speed > 0.25) {
       // Travelling remotes stand up and walk regardless of their held pose.
       if (!g.userData.rwalking) { setPose(g, 'standing'); g.userData.rwalking = true; }
@@ -1977,7 +2011,9 @@ function updateBotSeekers(dt) {
       s.prey = null;
       let pd = Infinity;
       const SIGHT = 3.4 * cs * T.sight;
-      for (const h of snap.bodies) {
+      // Decoys are candidate prey too — bots get fooled just like humans
+      // (the server pops the decoy and jams their gun when they shoot it).
+      for (const h of [...snap.bodies, ...(snap.decoys || [])]) {
         if (h.seeker || h.found) continue;
         const dx = h.x - s.x, dz = h.z - s.z;
         const d = Math.hypot(dx, dz);
@@ -2169,6 +2205,22 @@ function clearOccluderFade() {
   fadedOccluders.clear();
 }
 
+// Round intro: the camera starts high above the hider and swoops down into
+// the normal chase cam over ~2s — everyone learns the map layout, and each
+// round opens like a show.
+let introUntil = 0;
+const _introV = new THREE.Vector3();
+function applyIntroFly(target) {
+  if (!target) return;
+  const left = introUntil - performance.now();
+  if (left <= 0) return;
+  const k = Math.min(1, left / 2200);          // 1 at round start → 0
+  const e = k * k * (3 - 2 * k);               // smoothstep
+  _introV.set(target.x + 0.01, (target.y || 0) + 15 * charScale(), target.z + 0.01);
+  camera.position.lerp(_introV, e);
+  if (e > 0.02) camera.lookAt(target.x, (target.y || 0) + 0.5, target.z);
+}
+
 function updateCamera() {
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
@@ -2270,7 +2322,7 @@ function updateCamera() {
     return;
   }
 
-  if (hiderControls() || iSpectate()) thirdPerson(myBody, HIDER_SCALE * charScale() * 2);
+  if (hiderControls() || iSpectate()) { thirdPerson(myBody, HIDER_SCALE * charScale() * 2); applyIntroFly(myBody); }
   else if (snap.phase === 'hunt' && snap.myRole === 'seeker' && seekerPos) overShoulder(seekerPos);
   else {
     const mine = snap.bodies && snap.bodies.find((b) => b.mine);
@@ -2293,6 +2345,11 @@ function updateWalk(dt) {
     const a = Math.sin(walkPhase) * 0.5;
     j.legL.rotation.x = a; j.legR.rotation.x = -a;
     j.armL.rotation.x = -a * 0.8; j.armR.rotation.x = a * 0.8;
+    // My own sprint prints (remote hiders stamp theirs in updateRemoteAnims).
+    if (snap && snap.phase === 'hunt') {
+      const nowMs = performance.now();
+      if (nowMs - myFootAt > 320) { myFootAt = nowMs; stampFootprint(myBody.x, myBody.z); }
+    }
   } else if (myChar.userData.walking || walkPhase !== 0) {
     walkPhase = 0;
     myChar.userData.walking = false;
@@ -2331,14 +2388,15 @@ function updateActionButtons() {
   // BOTH Fire buttons while the paint gun reloads.
   if (seekerHunt) {
     const since = Date.now() - lastShotAt;
-    const reloading = since < RELOAD_MS;
+    const rms = reloadMsNow();
+    const reloading = since < rms;
     $('crosshair').classList.toggle('reloading', reloading);
     const sweep = reloading
-      ? `conic-gradient(transparent ${(since / RELOAD_MS) * 360}deg, rgba(30,30,40,.55) 0)`
+      ? `conic-gradient(transparent ${(since / rms) * 360}deg, rgba(30,30,40,.55) 0)`
       : 'none';
     $('fireCd').style.background = sweep;
     $('fireCdL').style.background = sweep;
-    const txt = reloading ? `${Math.ceil((RELOAD_MS - since) / 1000)}s…` : 'Fire';
+    const txt = reloading ? `${Math.ceil((rms - since) / 1000)}s…` : 'Fire';
     for (const btn of [$('fireBtn'), $('fireBtnL')]) {
       const lbl = btn.querySelector('.lbl');
       if (lbl.textContent !== txt) lbl.textContent = txt;
@@ -2357,6 +2415,8 @@ function tick(dt, render) {
   const t = clock.elapsedTime;
   updateRemoteAnims(dt, t);
   updateProjectiles(dt);
+  updateFootprints();
+  updateDisco(t);
   for (const [, g] of beacons) {          // [pillar, label] group per hider
     const pillar = g.children[0];
     if (pillar && pillar.material) { pillar.rotation.y += dt * 2; pillar.material.opacity = 0.4 + 0.25 * Math.sin(t * 5); }
@@ -2608,15 +2668,20 @@ function handleTap(clientX, clientY) {
 // splat shows for everyone via the 'blast' event.
 const SHOOT_COLORS = ['#ff3bd0', '#ffd23b', '#3bd1ff', '#7CFC00', '#ff6b3b', '#b14bff'];
 const RELOAD_MS = 3000;   // shots are free — missing just costs this wait
+// The Quickdraw twist swaps in a snappy reload (server enforces the same).
+function reloadMsNow() {
+  return snap && snap.settings && snap.settings.modifier === 'quickdraw' ? 1200 : RELOAD_MS;
+}
 let lastShotAt = 0;
 function seekerShoot() {
   if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker') return;
   const now = Date.now();
-  if (now - lastShotAt < RELOAD_MS) return; // reloading
+  if (now - lastShotAt < reloadMsNow()) return; // reloading
   raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);  // dead centre
   const targets = [];
   if (roomGroup) targets.push(roomGroup);
   for (const g of charGroups.values()) targets.push(g);
+  for (const g of decoyGroups.values()) targets.push(g);   // decoys soak shots too
   const hit = raycaster.intersectObjects(targets, true)[0];
   const p = hit ? hit.point : raycaster.ray.at(25, new THREE.Vector3());
   lastShotAt = now;
@@ -2711,6 +2776,138 @@ function paintSplat(x, y, z, color) {
 function clearSplats() {
   for (const d of splatDecals) { scene.remove(d); d.geometry.dispose(); d.material.dispose(); }
   splatDecals.length = 0;
+}
+
+// ---- Sprint footprints ----------------------------------------------------
+// A hider moving fast leaves faint prints that fade over ~4s — running is
+// loud, posing is safe. Rendered by every client from the same body stream.
+const footprints = [];
+function stampFootprint(x, z) {
+  if (!scene) return;
+  const cs = charScale();
+  const m = new THREE.Mesh(
+    new THREE.CircleGeometry(0.06 * cs, 8),
+    new THREE.MeshBasicMaterial({ color: 0x33291f, transparent: true, opacity: 0.3, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(
+    x + (Math.random() - 0.5) * 0.08 * cs,
+    surfaceTop(x, z) + 0.02,
+    z + (Math.random() - 0.5) * 0.08 * cs);
+  m.userData.t0 = performance.now();
+  scene.add(m); footprints.push(m);
+  if (footprints.length > 90) {
+    const old = footprints.shift();
+    scene.remove(old); old.geometry.dispose(); old.material.dispose();
+  }
+}
+function updateFootprints() {
+  const now = performance.now();
+  for (let i = footprints.length - 1; i >= 0; i--) {
+    const m = footprints[i];
+    const t = (now - m.userData.t0) / 4000;
+    if (t >= 1) {
+      scene.remove(m); m.geometry.dispose(); m.material.dispose();
+      footprints.splice(i, 1);
+    } else m.material.opacity = 0.3 * (1 - t);
+  }
+}
+function clearFootprints() {
+  for (const m of footprints) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  footprints.length = 0;
+}
+let myFootAt = 0;
+
+// ---- Decoys ---------------------------------------------------------------
+// Planted fake hiders (frozen copies of a hider's body). Rendered exactly like
+// real hiders so seekers — and bot seekers — can't tell without shooting.
+const decoyGroups = new Map();
+function syncDecoys(list) {
+  const seen = new Set();
+  for (const d of list) {
+    seen.add(d.id);
+    let g = decoyGroups.get(d.id);
+    if (!g) {
+      g = buildCharacter(d.paint, d.shape || 'egg');
+      g.userData.pose = null;
+      scene.add(g);
+      decoyGroups.set(d.id, g);
+    }
+    applyPaintUrl(g, d.paint);
+    if (g.userData.pose !== d.pose) { setPose(g, d.pose); g.userData.pose = d.pose; }
+    g.position.set(d.x, (d.y || 0) + (g.userData.baseY || 0), d.z);
+    g.rotation.y = d.ry || 0;
+  }
+  for (const [id, g] of [...decoyGroups]) {
+    if (!seen.has(id)) { scene.remove(g); decoyGroups.delete(id); }
+  }
+}
+let decoyUsedRound = -1;
+$('decoyBtn').addEventListener('click', () => {
+  if (!snap || !hiderControls() || decoyUsedRound === snap.round) return;
+  decoyUsedRound = snap.round;
+  sendMove(true);                   // the server plants it at my exact spot
+  socket.emit('decoy');
+  SFX.decoy(); buzz(30);
+  toast('🪆 Decoy planted! Now sneak somewhere else…', 2200);
+  updateActionButtons();
+});
+socket.on('decoypop', ({ x, y, z, byId, by, ownerId }) => {
+  paintSplat(x, (y || 0) + 0.3, z, '#ffffff');
+  SFX.decoy();
+  if (byId === myId) {
+    lastShotAt = Date.now() + 2000;    // jammed — server enforces the same
+    toast('🪆 That was a DECOY! Gun jammed +2s', 2400); buzz(80);
+  } else if (ownerId === myId) {
+    toast(`🪆 Your decoy fooled ${by}! +15`, 2400);   // toast is textContent — no escaping
+  }
+});
+
+// ---- Seeker scan pulse ------------------------------------------------------
+// Once per round: every remaining hider (and decoy!) echoes through the walls
+// for under a second — a comeback tool for a seeker running out of time.
+let scanUsedRound = -1;
+$('scanBtn').addEventListener('click', () => {
+  if (!snap || snap.phase !== 'hunt' || snap.myRole !== 'seeker' || scanUsedRound === snap.round) return;
+  scanUsedRound = snap.round;
+  const cs = charScale();
+  let n = 0;
+  const candidates = [...(snap.bodies || []), ...(snap.decoys || [])];
+  for (const b of candidates) {
+    if (b.seeker || b.found || b.mine) continue;
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.3, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: 0.6, depthTest: false, depthWrite: false }));
+    m.scale.set(0.6 * cs, 0.9 * cs, 0.6 * cs);
+    m.position.set(b.x, (b.y || 0) + 0.3 * cs, b.z);
+    m.renderOrder = 999;
+    scene.add(m); n++;
+    const t0 = performance.now();
+    (function fade() {
+      const t = (performance.now() - t0) / 900;
+      if (t >= 1) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); return; }
+      m.material.opacity = 0.6 * (1 - t);
+      requestAnimationFrame(fade);
+    })();
+  }
+  SFX.scan(); buzz(40);
+  toast(n ? `🛰️ ${n} echo${n > 1 ? 'es' : ''} detected!` : '🛰️ No echoes…', 1800);
+  updateActionButtons();
+});
+
+// ---- Disco Fever ------------------------------------------------------------
+// The sun cycles hue all round: painted camouflage keeps drifting in and out
+// of match, so nobody's hide is ever "done".
+let _sunDefault = null;
+function updateDisco(t) {
+  if (!sunLight) return;
+  const on = snap && snap.settings && snap.settings.modifier === 'disco' &&
+    (snap.phase === 'prep' || snap.phase === 'hunt');
+  if (on) {
+    if (!_sunDefault) _sunDefault = sunLight.color.clone();
+    sunLight.color.setHSL((t * 0.06) % 1, 0.75, 0.62);
+  } else if (_sunDefault) {
+    sunLight.color.copy(_sunDefault); _sunDefault = null;
+  }
 }
 
 // Read the EXACT pixel the player sees under the tap, as a "#rrggbb" string.
@@ -2992,8 +3189,11 @@ function renderGame() {
     lastPhaseKey = key;
     if (phase === 'prep') {
       window.__ov = 0;   // a leftover debug overview must never hijack a round
-      if (role === 'hider') showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
-      else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
+      clearFootprints();               // last round's tracks vanish
+      if (role === 'hider') {
+        introUntil = performance.now() + 2200;   // swooping round-intro camera
+        showBanner('🦎', 'YOU HIDE!', 'Pick a spot, strike a pose, paint yourself into it!', 'hider');
+      } else showBanner('🔍', 'YOU SEEK!', 'The chameleons are painting up… get ready!', 'seeker');
     } else if (phase === 'hunt') {
       // Host duty: the server placed bot hiders blind (it has no geometry),
       // so nudge any bot that ended up inside furniture to clear floor.
@@ -3030,6 +3230,7 @@ function renderGame() {
   if (!(phase === 'hunt' && role === 'seeker')) removeSeekerChar();
   if (phase === 'hunt' || phase === 'roundover') syncHunt(snap.bodies || [], hiderControls());
   else clearChars();
+  syncDecoys(snap.decoys || []);   // planted fakes render for everyone
 
   // Reveal beacons: at round end, a labelled pillar marks EVERY hider's spot
   // (gold = survived, red = caught) for the zoomed-out fly-over.
@@ -3044,8 +3245,18 @@ function renderGame() {
   $('seekerTools').classList.toggle('hidden', !isSeekerHunt);
   $('joystick').classList.toggle('hidden', !(canMove || isSeekerHunt || spectating));
   $('crosshair').classList.toggle('hidden', !isSeekerHunt);
-  $('emoteToggle').classList.toggle('hidden', phase !== 'hunt');
-  if (phase !== 'hunt' && emotesOpen) setEmotesOpen(false);
+  // Emotes during the hunt AND the reveal — post-round banter is the best part.
+  const emotesOk = phase === 'hunt' || phase === 'roundover';
+  $('emoteToggle').classList.toggle('hidden', !emotesOk);
+  if (!emotesOk && emotesOpen) setEmotesOpen(false);
+  // Decoy: one per round, only while you're a live hider.
+  $('decoyBtn').disabled = decoyUsedRound === snap.round;
+  // Scan pulse: seeker-only, once per round.
+  $('scanBtn').classList.toggle('hidden', !isSeekerHunt);
+  $('scanBtn').disabled = scanUsedRound === snap.round;
+  // Danger pay chip: a seeker is prowling near — you're earning +2/s.
+  $('dangerChip').classList.toggle('hidden',
+    !(phase === 'hunt' && role === 'hider' && !spectating && (snap.dangerIds || []).includes(myId)));
 
   // Spectator minimap (you can roam + see everyone once caught).
   $('minimap').classList.toggle('hidden', !snap.spectating);
@@ -3236,6 +3447,15 @@ function renderScores() {
   const sorted = [...snap.players].sort((a, b) => b.score - a.score);
   const isFinal = snap.round >= snap.totalRounds;
   $('scoreTitle').textContent = isFinal ? '🏆 Final Scores' : `Round ${snap.round} done!`;
+  // Round MVPs: bravest survivor and quickest catch.
+  const aw = snap.awards;
+  const awEl = $('awardsRow');
+  if (aw && (aw.sneakiest || aw.fastestCatch)) {
+    awEl.classList.remove('hidden');
+    awEl.innerHTML =
+      (aw.sneakiest ? `<div class="award">🕵️ Sneakiest: <b>${escapeHtml(aw.sneakiest.name)}</b>${aw.sneakiest.secs ? ` — ${aw.sneakiest.secs}s in the danger zone` : ''}</div>` : '') +
+      (aw.fastestCatch ? `<div class="award">⚡ Fastest catch: <b>${escapeHtml(aw.fastestCatch.name)}</b> — ${aw.fastestCatch.secs}s</div>` : '');
+  } else awEl.classList.add('hidden');
   $('scoreList').innerHTML = sorted.map((p, i) => `
     <li><span class="pemoji">${i === 0 ? '👑' : p.avatar}</span>
     <span class="pname">${escapeHtml(p.name)}</span>
@@ -3268,7 +3488,7 @@ $('peekMapBtn').addEventListener('click', () => {
 $('showScoresBtn').addEventListener('click', () => { SFX.click(); mapPeek = false; renderGame(); });
 
 // ---- Timer --------------------------------------------------------------
-let lastTickSec = -1;
+let lastTickSec = -1, lastHeartSec = -1;
 setInterval(() => {
   if (!snap || snap.phase === 'lobby') return;
   const remaining = Math.max(0, snap.deadline - (Date.now() + serverSkew));
@@ -3277,6 +3497,11 @@ setInterval(() => {
   const low = secs <= 10 && (snap.phase === 'prep' || snap.phase === 'hunt');
   el.classList.toggle('low', low);
   if (low && secs !== lastTickSec) { lastTickSec = secs; SFX.tick(); }
+  // Endgame heartbeat: last 10 seconds of the HUNT — pulse + thump for both
+  // sides. (Prep keeps the plain tick only.)
+  const endgame = snap.phase === 'hunt' && secs <= 10 && secs > 0;
+  $('heartVignette').classList.toggle('hidden', !endgame);
+  if (endgame && secs !== lastHeartSec) { lastHeartSec = secs; SFX.heartbeat(); buzz(25); }
   // Seeker's waiting-room countdown mirrors the big timer.
   if (snap.phase === 'prep' && snap.myRole === 'seeker') $('waitCount').textContent = secs > 0 ? secs : '';
   // Whistle countdown bar: when it empties, you whistle automatically.
