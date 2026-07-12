@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=45';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=46';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -37,10 +37,11 @@ let lastMoveSent = 0, lastTexSent = 0, paintDirtyForSync = false;
 function show(screen) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   $(`screen-${screen}`).classList.add('active');
-  // The 3D game is landscape-only on phones (portrait is too narrow to spot
-  // anything); menus are fine either way.
+  // The whole game is landscape-only on phones (the rotate overlay blocks
+  // portrait); every screen change re-tries the lock in case the last
+  // attempt was denied for lacking a user gesture.
   document.body.classList.toggle('in-game', screen === 'game');
-  if (screen === 'game') tryLandscapeLock();
+  tryLandscapeLock();
 }
 
 // Best effort: fullscreen + rotate to landscape (works on Android Chrome from
@@ -58,6 +59,8 @@ async function tryLandscapeLock() {
   } catch (_) { /* not allowed here — the overlay asks the player to rotate */ }
 }
 $('rotateOverlay').addEventListener('click', tryLandscapeLock);
+// Android needs a user gesture for fullscreen+lock: piggyback on the first tap.
+window.addEventListener('pointerdown', () => tryLandscapeLock(), { once: true });
 function toast(msg, ms = 1800) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), ms);
@@ -1491,6 +1494,10 @@ function depenetrate(p, rayY, rad) {
 // Is (x,z) a clear spot (no wall within `rad`, floor under it, headroom to
 // stand)? Used to fix bad spawns — never start wedged inside furniture.
 function isClear(x, y, z, rad) {
+  // Outside the play bounds is technically "clear" (no walls out there!) —
+  // never let a spawn fix or unstick pop relocate a player out of the arena.
+  const b = bounds();
+  if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
   if (!hasFloor(x, z, y)) return false;
   // Reject furniture tops: a spot that sits noticeably ABOVE its
   // surroundings is a counter/table/wardrobe, not floor — spawning up there
@@ -1699,7 +1706,10 @@ function applyMovement(dt) {
         _ro.set(p.x - climbDir.x * 0.35, hy, p.z - climbDir.z * 0.35);
         _rd.set(climbDir.x, 0, climbDir.z).normalize();
         _rc.set(_ro, _rd); _rc.far = 0.35 + CLING_REACH;
-        return _rc.intersectObjects(collisionMeshes, true)[0];
+        // Same rule as attaching: boundary walls never stick — sidling along
+        // scenery must not hand the climber over to a perimeter wall.
+        return _rc.intersectObjects(collisionMeshes, true)
+          .find((h) => !h.object.userData.noCling);
       };
       const sh = probeStick((p.y || 0) + 0.12) || probeStick((p.y || 0) + 0.45);
       const gy = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
@@ -1707,14 +1717,30 @@ function applyMovement(dt) {
       // sticks (that's the picture-frame pose).
       if ((p.y || 0) <= gy + 0.05 && up < 0) { p.y = gy; stopClimb(); }
       else if (sh) {
-        climbMiss = 0;
-        p.x = sh.point.x - climbDir.x * CLING_GAP;
-        p.z = sh.point.z - climbDir.z * CLING_GAP;
+        const sx = sh.point.x - climbDir.x * CLING_GAP;
+        const sz = sh.point.z - climbDir.z * CLING_GAP;
+        // A stick point far from where we are means the ray started inside
+        // the wall and hit the FAR face — snapping there tunnels the player
+        // through. Treat it as a miss instead of teleporting.
+        if (Math.hypot(sx - p.x, sz - p.z) <= 0.45 * charScale()) {
+          climbMiss = 0;
+          p.x = clamp(sx, b.minX, b.maxX);
+          p.z = clamp(sz, b.minZ, b.maxZ);
+        } else if (++climbMiss >= 5) { stopClimb(); }
       } else if (++climbMiss >= 5) {                                       // surface really ended
         const fx = clamp(p.x + climbDir.x * 0.35, b.minX, b.maxX);
         const fz = clamp(p.z + climbDir.z * 0.35, b.minZ, b.maxZ);
         if (up > 0 && hasFloor(fx, fz, p.y)) {                             // crested the top → step on
-          p.x = fx; p.z = fz; p.y = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
+          // ...but never onto a wall top: walls are the springboard for
+          // hopping between rooms or clean out of the arena. Two tells —
+          // the top sits at/above the roof cap, or it's a knife-edge (the
+          // ground one step further along falls away). Furniture tops are
+          // lower AND wide, so they still crest fine.
+          const gy2 = groundUnder(fx, (p.y || 0) + 0.4, fz);
+          const gy3 = groundUnder(fx + climbDir.x * 0.2, gy2 + 0.4, fz + climbDir.z * 0.2);
+          if (gy2 <= roofY() - 0.15 && gy2 - gy3 <= 1.0 * charScale()) {
+            p.x = fx; p.z = fz; p.y = gy2;
+          }
         }
         stopClimb();                                                      // otherwise drop
       }
@@ -1746,6 +1772,9 @@ function applyMovement(dt) {
       const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
       p.y = ny;
     }
+    // Hard arena limit: no matter which mover wrote the position this frame
+    // (walk, climb re-stick, depenetrate, unstick pop), it ends up in bounds.
+    p.x = clamp(p.x, b.minX, b.maxX); p.z = clamp(p.z, b.minZ, b.maxZ);
     autoUnstick(p, dt);
     nearSurface = !climbing && (frameCount % 3 === 0 ? detectSurface(p) : nearSurface);
     ensureMyChar(myBody);
@@ -1778,6 +1807,7 @@ function applyMovement(dt) {
     if (ny <= g) { ny = g; p.vy = 0; }
     const cap = roofY(); if (ny > cap) { ny = cap; if (p.vy > 0) p.vy = 0; }
     p.y = ny;
+    p.x = clamp(p.x, b.minX, b.maxX); p.z = clamp(p.z, b.minZ, b.maxZ);
     autoUnstick(p, dt);
     ensureSeekerChar(p);
     sendSeek();
@@ -1794,6 +1824,7 @@ function applyMovement(dt) {
       if (hasFloor(nx, nz, p.y)) { p.x = nx; p.z = nz; }
     }
     depenetrate(p, (p.y || 0) + 0.12, 0.16);
+    p.x = clamp(p.x, b.minX, b.maxX); p.z = clamp(p.z, b.minZ, b.maxZ);
     p.y = groundUnder(p.x, (p.y || 0) + 0.5, p.z);
   }
 }

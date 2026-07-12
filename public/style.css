@@ -504,16 +504,18 @@ body.paint-mode .whistle-meter { display: none !important; }
   box-shadow: inset 0 0 120px 40px rgba(255, 82, 82, .75); animation: vig .8s ease-out forwards; }
 @keyframes vig { from { opacity: 1; } to { opacity: 0; } }
 
-/* Rotate-your-phone blocker: shows over the GAME screen in portrait only.
-   (Home & lobby are fine in portrait — menus read better tall.) */
-.rotate-overlay { display: none; }
+/* Rotate-your-phone blocker: the whole game is landscape-only on touch
+   devices (menus scale for landscape phones; gameplay is unusable tall).
+   Desktop/laptop windows are exempt — only coarse-pointer devices block. */
+.rotate-overlay { display: none; position: fixed; inset: 0; z-index: 100;
+  align-items: center; justify-content: center; text-align: center;
+  background: rgba(13, 52, 82, .93); backdrop-filter: blur(6px);
+  padding: 24px; cursor: pointer; }
+@media (orientation: portrait) and (pointer: coarse) {
+  .rotate-overlay { display: flex; }
+}
 @media (orientation: portrait) {
-  body.in-game .rotate-overlay {
-    display: flex; position: fixed; inset: 0; z-index: 100;
-    align-items: center; justify-content: center; text-align: center;
-    background: rgba(13, 52, 82, .93); backdrop-filter: blur(6px);
-    padding: 24px; cursor: pointer;
-  }
+  body.in-game .rotate-overlay { display: flex; }
 }
 .rotate-inner h2 {
   color: #fffdf3; font-size: 26px; margin: 10px 0 6px;
