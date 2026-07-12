@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=46" />
+  <link rel="stylesheet" href="/style.css?v=47" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -112,7 +112,9 @@
     </div>
     <div id="hostSettings" class="card hidden">
       <h2>Settings</h2>
-      <label class="field"><span>Map</span><select id="mapSelect"></select></label>
+      <div class="field map-field"><span>Map</span>
+        <div id="mapPicker" class="map-picker"></div>
+      </div>
       <label class="field"><span>Mode</span>
         <select id="modeSelect">
           <option value="classic">Classic — find all hiders</option>
@@ -138,6 +140,20 @@
     <div class="card hidden" id="guestWait"><p class="muted">Waiting for the host to start…</p></div>
     <button id="startBtn" class="btn primary big hidden">▶ Start Game</button>
     <p id="lobbyHint" class="footnote"></p>
+
+    <!-- Host-only "is everyone ready?" check before the game actually starts -->
+    <div id="startConfirm" class="overlay hidden">
+      <div class="overlay-inner card quit-card">
+        <div class="big-emoji">🎉</div>
+        <h2>Ready to go?</h2>
+        <p class="muted">Make sure everyone in the party is set — once you start, hiders scatter immediately!</p>
+        <ul id="startConfirmList" class="player-list confirm-list"></ul>
+        <div class="quit-actions">
+          <button id="startCancel" class="btn secondary">Not yet</button>
+          <button id="startGo" class="btn primary">🚀 Start!</button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- GAME -->
@@ -304,6 +320,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=46"></script>
+  <script type="module" src="/game.js?v=47"></script>
 </body>
 </html>

@@ -333,6 +333,41 @@ input[type="range"] {
 /* Overlays */
 .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13, 52, 82, .55); backdrop-filter: blur(4px); z-index: 10; padding: 16px; }
 .overlay-inner { text-align: center; max-width: 380px; width: 100%; }
+
+/* Start confirmation lives in the scrolling lobby — pin it to the viewport. */
+#startConfirm { position: fixed; z-index: 60; }
+.confirm-list { margin-top: 10px; max-height: 30vh; overflow-y: auto; text-align: left; }
+
+/* ---- Map picker: snapshot cards instead of a dropdown ------------------- */
+.map-picker {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 10px; width: 100%;
+}
+.map-card {
+  position: relative; border: 3px solid rgba(58, 44, 26, .35); border-radius: 14px;
+  overflow: hidden; padding: 0; background: #fffdf3; cursor: pointer;
+  text-align: left; box-shadow: 0 3px 0 rgba(58, 44, 26, .25);
+  transition: transform .08s ease;
+}
+.map-card:active { transform: scale(.97); }
+.map-card.selected { border-color: #2e9b48; box-shadow: 0 0 0 3px rgba(46, 155, 72, .35), 0 3px 0 rgba(58, 44, 26, .25); }
+.map-card.selected::after {
+  content: '✔'; position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  background: #2e9b48; color: #fff; border-radius: 99px; font-size: 14px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+}
+.map-card img {
+  display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+  background: #cfe2f1; border-bottom: 2px solid rgba(58, 44, 26, .2);
+}
+.map-card .mc-name { font-weight: 900; font-size: 14px; padding: 6px 8px 0; color: var(--ink); }
+.map-card .mc-meta { display: flex; gap: 6px; padding: 4px 8px 8px; flex-wrap: wrap; }
+.map-card .mc-badge { font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 99px; border: 2px solid rgba(58, 44, 26, .25); }
+.mc-badge.d1 { background: #d7f5d0; color: #226b2e; }
+.mc-badge.d2 { background: #ffe9b8; color: #8a5a00; }
+.mc-badge.d3 { background: #ffd2cc; color: #99231a; }
+.mc-badge.size { background: #d9ecfb; color: #1c5e8f; }
+.map-card .mc-blurb { font-size: 11px; color: #6b6353; padding: 0 8px 8px; line-height: 1.35; }
 .overlay-inner.card { max-height: 82vh; overflow-y: auto; }
 .overlay-inner h2 { color: #fffdf3; text-shadow: 0 3px 0 #3a2c1a, -1.5px -1.5px 0 #3a2c1a, 1.5px -1.5px 0 #3a2c1a, -1.5px 1.5px 0 #3a2c1a, 1.5px 1.5px 0 #3a2c1a; font-size: 28px; }
 .overlay-inner.card h2 { color: var(--ink); text-shadow: none; }

@@ -257,7 +257,7 @@ export class Room {
       deadline: this.deadline,
       now: Date.now(),
       settings: this.settings,
-      mapId: this.settings.map,
+      mapId: this.map.id,   // validated — a removed/unknown map falls back to the default
       mapSize: map.size,
       myRole: me ? me.role : null,
       myId: forId,

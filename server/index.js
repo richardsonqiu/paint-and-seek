@@ -23,6 +23,23 @@ app.use(express.static(join(ROOT, 'public')));
 app.use('/shared', express.static(join(ROOT, 'shared')));
 app.get('/health', (_req, res) => res.json({ ok: true, rooms: store.rooms.size }));
 
+// Dev-only: authoring endpoint for the lobby map thumbnails. The client's
+// __snapimg debug helper POSTs a canvas JPEG here; only accepts local
+// connections and simple map-id filenames.
+app.post('/dev/snapshot', express.json({ limit: '4mb' }), async (req, res) => {
+  const ip = req.socket.remoteAddress || '';
+  if (!/^(::1|::ffff:127\.|127\.)/.test(ip)) return res.status(403).json({ ok: false });
+  const { id, dataUrl } = req.body || {};
+  if (!/^[a-z0-9-]{1,24}$/.test(id || '') || !/^data:image\/jpeg;base64,/.test(dataUrl || '')) {
+    return res.status(400).json({ ok: false });
+  }
+  const { writeFile, mkdir } = await import('fs/promises');
+  const dir = join(ROOT, 'public', 'img', 'maps');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${id}.jpg`), Buffer.from(dataUrl.split(',')[1], 'base64'));
+  res.json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 const RELOAD_MS = 3000;   // paint-gun reload; shots themselves are free
 

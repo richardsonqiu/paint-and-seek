@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=46';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints } from '/shared/maps.js?v=47';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -217,7 +217,19 @@ window.addEventListener('keydown', (e) => {
     setQuitOpen($('quitOverlay').classList.contains('hidden'));
   }
 });
-$('startBtn').onclick = () => socket.emit('start');
+// Starting scatters the hiders instantly, so the host gets a "everyone set?"
+// nudge first (only the host ever sees the Start button).
+$('startBtn').onclick = () => {
+  if (!snap) return;
+  $('startConfirmList').innerHTML = snap.players.map((p) => `
+    <li><span class="pemoji">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span>
+    ${p.isBot ? '<span class="tagbadge bot">BOT</span>' : ''}
+    ${p.isHost ? '<span class="tagbadge host">HOST</span>' : ''}</li>`).join('');
+  $('startConfirm').classList.remove('hidden');
+  SFX.click();
+};
+$('startCancel').onclick = () => { $('startConfirm').classList.add('hidden'); SFX.click(); };
+$('startGo').onclick = () => { $('startConfirm').classList.add('hidden'); socket.emit('start'); };
 $('shareBtn').onclick = async () => {
   const url = `${location.origin}/?room=${snap.code}`;
   try {
@@ -225,14 +237,36 @@ $('shareBtn').onclick = async () => {
     else { await navigator.clipboard.writeText(url); toast('Link copied!'); }
   } catch (_) {}
 };
-function buildMapSelect() {
-  const sel = $('mapSelect'); if (sel.options.length) return;
+// Effective ground you have to cover: bounds shrink-wrapped by the character
+// scale (a 1.6x doodler crosses a 30m yard as fast as a 1x one crosses ~19m).
+function mapSizeLabel(m) {
+  const b = m.bounds || { minX: -(m.size.x / 2 - 1), maxX: m.size.x / 2 - 1, minZ: -(m.size.z / 2 - 1), maxZ: m.size.z / 2 - 1 };
+  const rel = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / (m.charScale || 1);
+  return rel < 15 ? 'Small' : rel < 22 ? 'Medium' : rel < 28 ? 'Large' : 'Huge';
+}
+function buildMapPicker() {
+  const el = $('mapPicker'); if (el.childElementCount) return;
+  const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
   Object.values(MAPS).forEach((m) => {
-    const o = document.createElement('option'); o.value = m.id; o.textContent = m.name; sel.appendChild(o);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'map-card'; b.dataset.map = m.id;
+    b.innerHTML = `
+      <img src="/img/maps/${m.id}.jpg" alt="${m.name}" loading="lazy"
+           onerror="this.style.display='none'">
+      <div class="mc-name">${m.name}</div>
+      <div class="mc-meta">
+        <span class="mc-badge d${m.difficulty || 2}">${DIFF[m.difficulty] || 'Medium'}</span>
+        <span class="mc-badge size">${mapSizeLabel(m)}</span>
+      </div>
+      <div class="mc-blurb">${m.blurb || ''}</div>`;
+    b.addEventListener('click', () => { socket.emit('settings', { map: m.id }); SFX.click(); });
+    el.appendChild(b);
   });
 }
-['mapSelect', 'modeSelect'].forEach((id) =>
-  $(id).addEventListener('change', () => socket.emit('settings', { [id.replace('Select', '')]: $(id).value })));
+function syncMapPicker(mapId) {
+  for (const c of $('mapPicker').children) c.classList.toggle('selected', c.dataset.map === mapId);
+}
+$('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
@@ -254,8 +288,9 @@ function renderLobby() {
   $('startBtn').disabled = !(isHost && snap.players.length >= 1);
   $('lobbyHint').textContent = snap.players.length < 2 ? 'Best with friends — share the code! (You can solo-test too.)' : '';
   if (isHost) {
-    buildMapSelect();
-    $('mapSelect').value = snap.settings.map; $('modeSelect').value = snap.settings.mode;
+    buildMapPicker();
+    syncMapPicker(snap.settings.map);
+    $('modeSelect').value = snap.settings.mode;
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
     $('roundsInput').value = snap.settings.rounds;
     $('seekersInput').value = snap.settings.seekers || 1;
@@ -891,7 +926,17 @@ function buildCharacter(paintUrl, shape = 'egg') {
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, ATLAS, ATLAS);  // plain white!
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, metalness: 0.0 });
+  // Camouflage-true paint: the eyedropper samples the LIT, fogged colour the
+  // wall shows on screen — if the body then re-lights that colour as albedo,
+  // the sun multiplies it by 1.0–3.2x depending on facing and the "match"
+  // reads several shades off (the old "picked colour never blends" bug).
+  // Show the paint mostly EMISSIVE (exactly the picked shade) with a faint
+  // lit component so the body still reads as 3D (±10% instead of ±150%).
+  const material = new THREE.MeshStandardMaterial({
+    map: texture, roughness: 0.9, metalness: 0.0,
+    emissiveMap: texture, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.8,
+    color: new THREE.Color('#1a1a1a'),
+  });
 
   const G = buildCharGeos(shape);
   const D = G.dims;
@@ -3343,6 +3388,13 @@ window.__top = (x, z) => {
   _ro.set(x, 30, z); _rd.set(0, -1, 0); _rc.set(_ro, _rd); _rc.far = 60;
   const h = _rc.intersectObjects(collisionMeshes, true)[0];
   return h ? +h.point.y.toFixed(2) : null;
+};
+// Debug: capture the canvas as a JPEG data URL (fresh render first — the
+// drawing buffer isn't preserved between frames). Used to author the lobby
+// map-snapshot thumbnails.
+window.__snapimg = (q = 0.85) => {
+  renderer.render(scene, camera);
+  return renderer.domElement.toDataURL('image/jpeg', q);
 };
 window.__state = () => ({
   body: myBody && { x: +myBody.x.toFixed(2), y: +(myBody.y || 0).toFixed(2), z: +myBody.z.toFixed(2), pose: myBody.pose },

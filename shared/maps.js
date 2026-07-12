@@ -56,6 +56,8 @@ export const MAPS = {
   rooms: {
     id: 'rooms',
     name: 'The Flat',
+    difficulty: 1,                 // menu card: 1 easy · 2 medium · 3 hard
+    blurb: 'A bright little apartment — tight rooms, quick rounds.',
     size: { x: 30, z: 20, h: 12 },
     charScale: 1,      // reference map — hider/seeker sizes are tuned here
     ground: '#8c9498',
@@ -99,6 +101,8 @@ export const MAPS = {
   plaza: {
     id: 'plaza',
     name: 'The Plaza',
+    difficulty: 2,
+    blurb: 'An open-air sports square on a hill — courts, stands and trees.',
     // Shrunk ~17% (fit 46 -> 38): tighter sweep for the seeker outdoors.
     size: { x: 44, z: 44, h: 14 },
     // Sized to sit naturally among the plaza's benches and courts — big
@@ -132,59 +136,13 @@ export const MAPS = {
     ],
   },
 
-  // ---- Mega City: an open world built from full standalone scene models ----
-  // Each downloaded building/scene is auto-fit, centred and dropped onto a big
-  // ground plane in its own district. (`scenes` entries are large GLBs loaded
-  // by file path, not Kenney kit pieces.)
-  city: {
-    id: 'city',
-    name: 'Mega City',
-    // Shrunk 25% (everything ×0.75): the old 160m sprawl took too long to
-    // cross — districts keep their layout, just packed tighter.
-    size: { x: 120, z: 120, h: 40 },
-    // The big map: characters scaled to read against the buildings without
-    // looking like giants; movement scales with charScale, so crossing the
-    // centre still takes ~16s.
-    charScale: 2.2,
-    ground: '#9fb08a',
-    sky: '#bcd6ea',
-    fog: { color: '#cfe0ec', near: 55, far: 175 },
-    groundWalk: true,  // streets between buildings are the play surface
-    roof: 12,          // buildings are tall — allow climbing their lower tiers
-    // Full enclosure: city walls on all four sides. Placed at ±58 so every
-    // district fits whole inside (the outer blocks reach ~±57 — walls at
-    // the old ±50 bounds would slice them), and TALLER than the 12m roof
-    // so the boundary can't be climbed over.
-    capWalls: [
-      { x: -58.3, len: 117.5, h: 13, color: '#c2c4bd' },
-      { x: 58.3, len: 117.5, h: 13, color: '#c2c4bd' },
-      { z: -58.3, len: 117.5, h: 13, color: '#c2c4bd' },
-      { z: 58.3, len: 117.5, h: 13, color: '#c2c4bd' },
-    ],
-    bounds: { minX: -58, maxX: 58, minZ: -58, maxZ: 58 },
-    scenes: [
-      { file: 'praca_esporte_morro_da_garca.glb', pos: [0, 0], fit: 39 },          // sports plaza (centre)
-      { file: 'apartamento.glb', pos: [-37.5, -37.5], fit: 27 },                    // apartment block
-      { file: 'ice_scream_3_shopping_center_map.glb', pos: [0, -40.5], fit: 33 },   // shopping centre
-      { file: 'sanzio_predio_humanizada.glb', pos: [39, -37.5], fit: 27 },          // tower building
-      { file: 'unimed_loja_de_vendas.glb', pos: [-40.5, 3], fit: 27 },             // store
-      { file: 'the-picture-gallery-low-poly-vr/source/Untitled.glb', pos: [40.5, 4.5], fit: 20 }, // gallery
-      { file: 'apartment-floor-plan/source/apartment.glb', pos: [-37.5, 39], fit: 22 },           // apartment (rooms)
-      { file: 'apartment-floor-plan (1)/source/floorplan.glb', pos: [0, 40.5], fit: 26 },         // floor plan (rooms)
-      { file: 'appartement/source/appartement.glb', pos: [39, 39], fit: 20 },                     // apartment (rooms)
-    ],
-    spawns: [
-      [-21, -21], [0, -22], [21, -21],
-      [-24, 3], [24, 4], [-21, 21], [0, 22], [21, 21],
-      [-10, -10], [10, 10], [12, -12], [-12, 12],
-    ],
-  },
-
   // ---- The Loft: a second furnished apartment (different layout from The
   // Flat) — same doll-house interior gameplay.
   loft: {
     id: 'loft',
     name: 'The Loft',
+    difficulty: 1,
+    blurb: 'A second apartment with a twistier floor plan.',
     // Probed footprint at fit 22: ~21 x 21m, enclosed by the model's own
     // exterior walls; cap walls outside as a backstop, bounds just inside.
     size: { x: 26, z: 26, h: 12 },
@@ -213,6 +171,8 @@ export const MAPS = {
   docks: {
     id: 'docks',
     name: 'The Docks',
+    difficulty: 2,
+    blurb: 'A walled pirate harbour packed with crates and barrels.',
     size: { x: 30, z: 30, h: 10 },
     charScale: 1.6,
     ground: '#c2a97c',
@@ -250,6 +210,8 @@ export const MAPS = {
   graveyard: {
     id: 'graveyard',
     name: 'The Graveyard',
+    difficulty: 3,
+    blurb: 'A foggy cemetery — headstones, pines and short sightlines.',
     size: { x: 30, z: 30, h: 10 },
     charScale: 1.6,
     ground: '#4e6b46',
@@ -285,6 +247,8 @@ export const MAPS = {
   grounds: {
     id: 'grounds',
     name: 'The Grounds',
+    difficulty: 3,
+    blurb: 'A huge nine-room compound — market, forest, graveyard and more.',
     size: { x: 54, z: 54, h: 10 },
     // Sized to the kits' people-scale props (barrels, stalls) — hiders tuck
     // behind them without towering over them; movement scales with it.
