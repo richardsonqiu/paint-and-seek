@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=48';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=49';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1811,13 +1811,17 @@ function applyMovement(dt) {
         const fz = clamp(p.z + climbDir.z * 0.35, b.minZ, b.maxZ);
         if (up > 0 && hasFloor(fx, fz, p.y)) {                             // crested the top → step on
           // ...but never onto a wall top: walls are the springboard for
-          // hopping between rooms or clean out of the arena. Two tells —
-          // the top sits at/above the roof cap, or it's a knife-edge (the
-          // ground one step further along falls away). Furniture tops are
-          // lower AND wide, so they still crest fine.
+          // hopping between rooms or clean out of the arena. Three tells —
+          // the top sits at/above the roof cap, it's a knife-edge (the
+          // ground one step further along falls away), or the "top" is far
+          // BELOW where you're hanging: through a THIN wall both probes land
+          // on the far room's FLOOR, which fooled the knife-edge check and
+          // teleported climbers into sealed rooms. A real crest is a step
+          // onto a surface at your level. Furniture tops still crest fine.
           const gy2 = groundUnder(fx, (p.y || 0) + 0.4, fz);
-          const gy3 = groundUnder(fx + climbDir.x * 0.2, gy2 + 0.4, fz + climbDir.z * 0.2);
-          if (gy2 <= roofY() - 0.15 && gy2 - gy3 <= 1.0 * charScale()) {
+          const gy3 = groundUnder(fx + climbDir.x * 0.35, gy2 + 0.4, fz + climbDir.z * 0.35);
+          if (gy2 <= roofY() - 0.15 && gy2 - gy3 <= 1.0 * charScale() &&
+              gy2 >= (p.y || 0) - 0.6 * charScale()) {
             p.x = fx; p.z = fz; p.y = gy2;
           }
         }
@@ -1828,12 +1832,21 @@ function applyMovement(dt) {
     } else {
       // Camera-relative walk.
       const mv = moveVector();
+      // Airborne wall-seal: remember the floor you took off from. While in
+      // the air, horizontal collision is probed no higher than ~one jump
+      // above that floor — so a wall whose top is below you STILL blocks,
+      // and a wall-jump can never drift you across into another room.
+      // (Room walls act as full-height bounding boxes, on every map.)
+      const gHere = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
+      if ((p.y || 0) <= gHere + 0.06) p._airGy = gHere;
+      const airCap = p._airGy == null ? Infinity : p._airGy + 1.15 * charScale();
       if (mv) {
         p.ry = lerpAngle(p.ry, Math.atan2(mv.x, mv.z), Math.min(1, dt * 12));
         followBehind(p.ry, dt);        // moving: camera swings back behind you
         let nx = clamp(p.x + mv.x * mv.mag * HSPD * dt, b.minX, b.maxX);
         let nz = clamp(p.z + mv.z * mv.mag * HSPD * dt, b.minZ, b.maxZ);
-        [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, HRAD, (p.y || 0) + 0.3);
+        [nx, nz] = slideMove(p.x, p.z, nx, nz,
+          Math.min(RAYY, airCap), HRAD, Math.min((p.y || 0) + 0.3, airCap + 0.2));
         // Stay on the building floor, and never crawl under furniture.
         const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
         if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_HIDER * charScale())) {
@@ -1868,11 +1881,17 @@ function applyMovement(dt) {
     const mv = moveVector();
     // FPS: the body always faces where the camera looks (the gun IS the aim).
     p.ry = cam.yaw;
+    // Same airborne wall-seal as hiders (see the hider branch): jumps can
+    // clear crates, never room walls.
+    const gHere = groundUnder(p.x, (p.y || 0) + 0.4, p.z);
+    if ((p.y || 0) <= gHere + 0.06) p._airGy = gHere;
+    const airCap = p._airGy == null ? Infinity : p._airGy + 1.35 * charScale();
     if (mv) {
       const spd = (seekerPeek ? MOVE_SPEED * 0.45 : MOVE_SPEED) * charScale();  // creep while peeking; scales with size
       let nx = clamp(p.x + mv.x * mv.mag * spd * dt, b.minX, b.maxX);
       let nz = clamp(p.z + mv.z * mv.mag * spd * dt, b.minZ, b.maxZ);
-      [nx, nz] = slideMove(p.x, p.z, nx, nz, RAYY, SRAD, (p.y || 0) + 0.5);
+      [nx, nz] = slideMove(p.x, p.z, nx, nz,
+        Math.min(RAYY, airCap), SRAD, Math.min((p.y || 0) + 0.5, airCap + 0.2));
       const gy = groundUnder(nx, (p.y || 0) + 0.4, nz);
       if (hasFloor(nx, nz, p.y) && headroomOK(p.x, p.y || 0, p.z, nx, gy, nz, MIN_HEADROOM_SEEKER * charScale())) {
         p.x = nx; p.z = nz; // stay on the building floor, out from under furniture
