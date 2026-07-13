@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=51';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=52';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -267,8 +267,16 @@ function buildMapPicker() {
     el.appendChild(b);
   });
 }
+let _pickerSel = null;
 function syncMapPicker(mapId) {
   for (const c of $('mapPicker').children) c.classList.toggle('selected', c.dataset.map === mapId);
+  // Glide the carousel to the selected card — once per selection change, so
+  // it never fights the host's own swiping.
+  if (_pickerSel !== mapId) {
+    _pickerSel = mapId;
+    const el = [...$('mapPicker').children].find((c) => c.dataset.map === mapId);
+    if (el) el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }
 }
 $('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));
 $('modifierSelect').addEventListener('change', () => socket.emit('settings', { modifier: $('modifierSelect').value }));
@@ -953,15 +961,15 @@ function buildCharacter(paintUrl, shape = 'egg') {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   // Camouflage-true paint: the eyedropper samples the LIT, fogged colour the
-  // wall shows on screen — if the body then re-lights that colour as albedo,
-  // the sun multiplies it by 1.0–3.2x depending on facing and the "match"
-  // reads several shades off (the old "picked colour never blends" bug).
-  // Show the paint mostly EMISSIVE (exactly the picked shade) with a faint
-  // lit component so the body still reads as 3D (±10% instead of ±150%).
+  // wall shows on screen. The skin renders it fully EMISSIVE and takes no
+  // scene light at all — the painted pixel on the body is LITERALLY the
+  // sampled pixel (same sRGB value through the same output transform), so a
+  // wall-picked colour is a perfect match from any angle. Even a faint lit
+  // component (tried at 10%) read a shade off against flat walls.
   const material = new THREE.MeshStandardMaterial({
     map: texture, roughness: 0.9, metalness: 0.0,
-    emissiveMap: texture, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.8,
-    color: new THREE.Color('#1a1a1a'),
+    emissiveMap: texture, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 1.0,
+    color: new THREE.Color('#000000'),
   });
 
   const G = buildCharGeos(shape);
@@ -1744,9 +1752,13 @@ function autoUnstick(p, dt) {
     p._anchor = { x: p.x, z: p.z, t: 0 };
     return;
   }
-  if (p._anchor.t > 2.5) {
+  if (p._anchor.t > 1.6) {
     p._anchor = null;
-    const [nx, nz] = findClearSpawn(p.x, p.z, 0.3);
+    // Standard clearance first; if the whole neighbourhood is cramped (deep
+    // between a pillar and a wall), accept a TIGHT spot — anywhere the body
+    // fits beats staying frozen.
+    let [nx, nz] = findClearSpawn(p.x, p.z, 0.3);
+    if (nx === p.x && nz === p.z) [nx, nz] = findClearSpawn(p.x, p.z, 0.17);
     if (nx !== p.x || nz !== p.z) {
       p.x = nx; p.z = nz; p.y = surfaceTop(nx, nz) + 0.02; p.vy = 0;
       toast('🪄 Popped free of a tight spot!', 1500);
@@ -2112,12 +2124,24 @@ function updateBotSeekers(dt) {
       s.ry = lerpAngle(s.ry, Math.atan2(dx, dz), Math.min(1, dt * 8));
       s.y = groundUnder(s.x, (s.y || 0) + 0.4, s.z);
     }
+    // Never stand overlapped into a pillar/wall (blocked in every direction
+    // = frozen forever) — shove out a little each tick, like players get.
+    depenetrate(s, (s.y || 0) + 0.25 * cs, 0.14 * cs);
     // ---- Stuck? Re-target — this is what turns wall-humping into sweeping ----
     s.stuck.t += dt;
     if (Math.hypot(s.x - s.stuck.x, s.z - s.stuck.z) > 0.4) {
       s.stuck = { x: s.x, z: s.z, t: 0 };
+      s.stuckPops = 0;
     } else if (s.stuck.t > 1.4) {
       s.target = null; s.lastSeen = null; s.mode = 'patrol';
+      // A new target usually frees a wall-hugger. If we STILL haven't moved
+      // by the next check, we're wedged inside geometry — pop to the nearest
+      // clear floor spot (same rescue players get).
+      if ((s.stuckPops = (s.stuckPops || 0) + 1) >= 2) {
+        const [cx, cz] = findClearSpawn(s.x, s.z, 0.3);
+        s.x = cx; s.z = cz; s.y = surfaceTop(cx, cz) + 0.02;
+        s.stuckPops = 0;
+      }
       s.stuck = { x: s.x, z: s.z, t: 0 };
     }
     // ---- Report to the server (~9 Hz per bot) ----
@@ -3654,9 +3678,13 @@ window.__top = (x, z) => {
 // Debug: capture the canvas as a JPEG data URL (fresh render first — the
 // drawing buffer isn't preserved between frames). Used to author the lobby
 // map-snapshot thumbnails.
-window.__snapimg = (q = 0.85) => {
+window.__snapimg = (q = 0.85, hideMe = false) => {
+  const vis = [];
+  if (hideMe) for (const g of [myChar, seekerChar]) if (g) { vis.push([g, g.visible]); g.visible = false; }
   renderer.render(scene, camera);
-  return renderer.domElement.toDataURL('image/jpeg', q);
+  const url = renderer.domElement.toDataURL('image/jpeg', q);
+  for (const [g, v] of vis) g.visible = v;
+  return url;
 };
 window.__botDbg = () => ({
   hosting: !!(snap && snap.phase === 'hunt' && snap.hostId === myId),
