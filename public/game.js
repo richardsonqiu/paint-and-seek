@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=55';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=56';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -297,18 +297,8 @@ function buildMapPicker() { /* rendered by syncMapPicker */ }
 $('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));
 $('modifierSelect').addEventListener('change', () => socket.emit('settings', { modifier: $('modifierSelect').value }));
 
-// Daily featured combo: same map + twist for everyone today, one-tap apply.
-function renderFeatured() {
-  const f = dailyFeatured();
-  const m = MAPS[f.mapId], mod = MODIFIERS[f.modifier];
-  if (!m || !mod) { $('featuredBanner').classList.add('hidden'); return; }
-  $('featuredText').textContent = `${m.name} × ${mod.icon} ${mod.name}`;
-  $('featuredApply').onclick = () => {
-    socket.emit('settings', { map: f.mapId, modifier: f.modifier });
-    SFX.click();
-    toast(`🌟 Featured on! ${m.name} with ${mod.name}`, 2000);
-  };
-}
+// (The daily-featured banner was retired from the map step so the photos get
+// its space; dailyFeatured()/MODIFIERS stay exported in maps.js for reuse.)
 $('prepInput').addEventListener('change', () => socket.emit('settings', { prepTime: +$('prepInput').value }));
 $('huntInput').addEventListener('change', () => socket.emit('settings', { huntTime: +$('huntInput').value }));
 $('roundsInput').addEventListener('change', () => socket.emit('settings', { rounds: +$('roundsInput').value }));
@@ -358,7 +348,6 @@ function renderLobby() {
   if (isHost) {
     buildMapPicker();
     syncMapPicker(snap.settings.map);
-    renderFeatured();
     $('modifierSelect').value = snap.settings.modifier || 'none';
     $('modeSelect').value = snap.settings.mode;
     $('prepInput').value = snap.settings.prepTime; $('huntInput').value = snap.settings.huntTime;
