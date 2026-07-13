@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=54';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=55';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -267,8 +267,9 @@ function mapCardInner(m, full) {
 let _pickerSel = null;
 function syncMapPicker(mapId) {
   if (_pickerSel === mapId && $('mapPicker').childElementCount) return;
-  _pickerSel = mapId;
   const ids = Object.keys(MAPS);
+  const oldI = ids.indexOf(_pickerSel);
+  _pickerSel = mapId;
   const i = Math.max(0, ids.indexOf(mapId));
   const prev = MAPS[ids[(i - 1 + ids.length) % ids.length]];
   const cur = MAPS[ids[i]];
@@ -280,6 +281,16 @@ function syncMapPicker(mapId) {
     <button type="button" class="map-card car-side" data-map="${next.id}" title="${next.name}">${mapCardInner(next, false)}</button>`;
   for (const b of el.querySelectorAll('.car-side')) {
     b.addEventListener('click', () => { socket.emit('settings', { map: b.dataset.map }); SFX.click(); });
+  }
+  // Rotation animation: the new trio slides in from the side it came from
+  // (the shortest way around the loop picks the direction).
+  if (oldI >= 0 && oldI !== i) {
+    const n = ids.length;
+    const fwd = (i - oldI + n) % n;             // steps if we rotated "right"
+    const cls = fwd <= n - fwd ? 'anim-r' : 'anim-l';
+    el.classList.remove('anim-l', 'anim-r');
+    void el.offsetWidth;                        // restart the CSS animation
+    el.classList.add(cls);
   }
 }
 function buildMapPicker() { /* rendered by syncMapPicker */ }
