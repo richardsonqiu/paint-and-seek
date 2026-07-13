@@ -304,7 +304,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   width: 70px; height: 70px;
 }
 
-/* Camera speed slider (home) */
+/* Camera speed slider (in-game settings overlay) */
 input[type="range"] {
   padding: 0; height: 34px; accent-color: var(--accent);
   background: transparent; border: none;

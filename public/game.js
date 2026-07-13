@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=57';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=58';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -208,6 +208,7 @@ function quitGame() {
   seekerPos = null; seekerRound = -1;
   climbing = false; seekerPeek = false;
   openSheet(null); setEmotesOpen(false); setQuitOpen(false);
+  $('settingsOverlay').classList.add('hidden');
   removeMyChar(); removeSeekerChar(); clearChars(); clearSplats(); syncBeacons([]);
   syncDecoys([]); clearFootprints();
   show('home');
@@ -216,6 +217,9 @@ function quitGame() {
 $('quitBtn').addEventListener('click', () => { setQuitOpen(true); SFX.click(); });
 $('quitCancel').addEventListener('click', () => { setQuitOpen(false); SFX.click(); });
 $('quitConfirm').addEventListener('click', quitGame);
+// In-game settings (camera speed) — tweak it mid-round without leaving.
+$('settingsBtn').addEventListener('click', () => { $('settingsOverlay').classList.remove('hidden'); SFX.click(); });
+$('settingsClose').addEventListener('click', () => { $('settingsOverlay').classList.add('hidden'); SFX.click(); });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.getElementById('screen-game').classList.contains('active')) {
     setQuitOpen($('quitOverlay').classList.contains('hidden'));
