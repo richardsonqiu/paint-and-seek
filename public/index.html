@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=52" />
+  <link rel="stylesheet" href="/style.css?v=53" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>" />
 </head>
 <body>
@@ -106,51 +106,73 @@
       <div class="room-code"><span class="muted">ROOM CODE</span><strong id="lobbyCode">----</strong></div>
       <button id="shareBtn" class="btn ghost">Share 📤</button>
     </header>
-    <div class="card">
-      <h2>Players <span id="playerCount" class="muted"></span></h2>
-      <ul id="playerList" class="player-list"></ul>
+    <!-- One task per screen: 1 Players → 2 Map → 3 Rules. The host steps
+         through with Next/Back; guests stay on the party screen. -->
+    <div id="lobbyDots" class="lobby-dots hidden">
+      <span class="ldot active" data-step="1">👥 Players</span>
+      <span class="ldot" data-step="2">🗺️ Map</span>
+      <span class="ldot" data-step="3">⚙️ Rules</span>
     </div>
-    <div id="hostSettings" class="card hidden">
-      <h2>Settings</h2>
-      <div id="featuredBanner" class="featured-banner">
-        <div class="fb-text"><b>🌟 Today's Featured</b><span id="featuredText"></span></div>
-        <button id="featuredApply" class="btn secondary">Play it</button>
+
+    <div id="lobbyStep1" class="lstep">
+      <div class="card party-card">
+        <h2>Players <span id="playerCount" class="muted"></span></h2>
+        <ul id="playerList" class="player-list party-grid"></ul>
       </div>
-      <div class="field map-field"><span>Map</span>
+      <div class="card hidden" id="guestWait"><p class="muted">Waiting for the host to start…</p></div>
+    </div>
+
+    <div id="lobbyStep2" class="lstep hidden">
+      <div class="card map-step-card">
+        <h2>Choose a map</h2>
+        <div id="featuredBanner" class="featured-banner">
+          <div class="fb-text"><b>🌟 Today's Featured</b><span id="featuredText"></span></div>
+          <button id="featuredApply" class="btn secondary">Play it</button>
+        </div>
         <div id="mapPicker" class="map-picker"></div>
       </div>
-      <label class="field"><span>Mode</span>
-        <select id="modeSelect">
-          <option value="classic">Classic — find all hiders</option>
-          <option value="infection">Infection — caught hiders join seekers</option>
-        </select>
-      </label>
-      <div class="settings-grid">
-        <label class="field"><span>Hide (s)</span><input id="prepInput" type="number" min="10" max="120" /></label>
-        <label class="field"><span>Seek base (s)</span><input id="huntInput" type="number" min="30" max="240" /></label>
-        <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="20" /></label>
-        <label class="field"><span>Seekers</span><input id="seekersInput" type="number" min="1" max="11" /></label>
-        <label class="field"><span>Bots</span><input id="botsInput" type="number" min="0" max="8" /></label>
-      </div>
-      <p class="footnote">Seek time = base + 30s per extra hider (100s base, 3 hiders = 160s). Everyone not seeking hides. Bots hide AND take seeker turns — great for playing alone. Rounds are bumped so every player gets a seeker turn. Max 10 in a room (humans replace bots).</p>
-      <label class="field"><span>Whistle</span>
-        <select id="whistleSelect">
-          <option value="auto">Auto — hiders auto-whistle every 30s (+10 for manual)</option>
-          <option value="manual">Manual only — no auto-whistle, brave whistles earn +30</option>
-          <option value="off">Off — silent hiding</option>
-        </select>
-      </label>
-      <label class="field"><span>Twist</span>
-        <select id="modifierSelect">
-          <option value="none">🎲 None — classic rules</option>
-          <option value="tiny">🐜 Tiny Hiders — hiders shrink to 2/3 size</option>
-          <option value="disco">🪩 Disco Fever — colour-cycling lights</option>
-          <option value="quickdraw">⚡ Quickdraw — 1.2s seeker reload</option>
-        </select>
-      </label>
     </div>
-    <div class="card hidden" id="guestWait"><p class="muted">Waiting for the host to start…</p></div>
-    <button id="startBtn" class="btn primary big hidden">▶ Start Game</button>
+
+    <div id="lobbyStep3" class="lstep hidden">
+      <div id="hostSettings" class="card">
+        <h2>Game rules</h2>
+        <label class="field"><span>Mode</span>
+          <select id="modeSelect">
+            <option value="classic">Classic — find all hiders</option>
+            <option value="infection">Infection — caught hiders join seekers</option>
+          </select>
+        </label>
+        <div class="settings-grid">
+          <label class="field"><span>Hide (s)</span><input id="prepInput" type="number" min="10" max="120" /></label>
+          <label class="field"><span>Seek base (s)</span><input id="huntInput" type="number" min="30" max="240" /></label>
+          <label class="field"><span>Rounds</span><input id="roundsInput" type="number" min="1" max="20" /></label>
+          <label class="field"><span>Seekers</span><input id="seekersInput" type="number" min="1" max="11" /></label>
+          <label class="field"><span>Bots</span><input id="botsInput" type="number" min="0" max="8" /></label>
+        </div>
+        <p class="footnote">Seek time = base + 30s per extra hider (100s base, 3 hiders = 160s). Everyone not seeking hides. Bots hide AND take seeker turns — great for playing alone. Rounds are bumped so every player gets a seeker turn. Max 10 in a room (humans replace bots).</p>
+        <label class="field"><span>Whistle</span>
+          <select id="whistleSelect">
+            <option value="auto">Auto — hiders auto-whistle every 30s (+10 for manual)</option>
+            <option value="manual">Manual only — no auto-whistle, brave whistles earn +30</option>
+            <option value="off">Off — silent hiding</option>
+          </select>
+        </label>
+        <label class="field"><span>Twist</span>
+          <select id="modifierSelect">
+            <option value="none">🎲 None — classic rules</option>
+            <option value="tiny">🐜 Tiny Hiders — hiders shrink to 2/3 size</option>
+            <option value="disco">🪩 Disco Fever — colour-cycling lights</option>
+            <option value="quickdraw">⚡ Quickdraw — 1.2s seeker reload</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="lobby-nav">
+      <button id="lobbyBackBtn" class="btn secondary hidden">← Back</button>
+      <button id="lobbyNextBtn" class="btn primary hidden">Next →</button>
+      <button id="startBtn" class="btn primary big hidden">▶ Start Game</button>
+    </div>
     <p id="lobbyHint" class="footnote"></p>
 
     <!-- Host-only "is everyone ready?" check before the game actually starts -->
@@ -343,6 +365,6 @@
   }
   </script>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/game.js?v=52"></script>
+  <script type="module" src="/game.js?v=53"></script>
 </body>
 </html>

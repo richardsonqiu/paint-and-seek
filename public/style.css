@@ -379,6 +379,39 @@ input[type="range"] {
   .map-card { flex-basis: 200px; }
   .map-card .mc-blurb { display: none; }
   .map-card .mc-name { font-size: 13px; padding-top: 4px; }
+  /* Slim the map step's chrome so name + badges stay visible under the card */
+  .featured-banner { padding: 5px 10px; margin-bottom: 8px; gap: 8px; }
+  .featured-banner .fb-text b { font-size: 10px; }
+  .featured-banner .fb-text span { font-size: 12px; }
+  .featured-banner .btn { padding: 6px 12px; font-size: 12px; }
+  .map-step-card h2, .party-card h2 { font-size: 14px; margin-bottom: 6px; }
+}
+
+/* ---- Lobby wizard: 1 Players → 2 Map → 3 Rules --------------------------- */
+.lobby-dots {
+  display: flex; gap: 8px; justify-content: center; width: 100%;
+}
+.lobby-dots .ldot {
+  font-size: 12px; font-weight: 800; padding: 5px 13px; border-radius: 99px;
+  background: rgba(255, 253, 243, .5); border: 2.5px solid rgba(58, 44, 26, .25);
+  color: #5d564a;
+}
+.lobby-dots .ldot.active { background: #fffdf3; border-color: rgba(58, 44, 26, .55); color: var(--ink); }
+.lobby-dots .ldot.done { background: #d7f5d0; color: #226b2e; }
+.lstep { display: flex; flex-direction: column; gap: 10px; width: 100%; align-items: center; }
+.lstep > .card { width: 100%; }
+.lobby-nav { display: flex; gap: 10px; justify-content: center; width: 100%; }
+.lobby-nav .btn { min-width: 150px; }
+.lobby-nav #startBtn { min-width: 240px; }
+
+/* Party grid: two columns, filling top-to-bottom — 5 on the left, 5 on the
+   right, exactly like a team sheet. */
+.party-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(5, min-content);
+  gap: 8px;
 }
 
 /* ---- Daily featured banner ---------------------------------------------- */
@@ -721,10 +754,14 @@ body.paint-mode .whistle-meter { display: none !important; }
     flex: 1 1 320px; max-width: 460px; align-self: flex-start;
     max-height: calc(100vh - 215px); overflow-y: auto; padding: 12px 14px;
   }
-  /* The settings card holds the map carousel — give it more headroom so a
-     whole map card fits without internal vertical scrolling (the page
-     itself scrolls to reach Start). */
-  #screen-lobby #hostSettings { max-height: calc(100vh - 120px); }
+  /* Wizard steps span the full row; their single card centres and can be
+     wider than the old side-by-side pair. The map/rules cards get extra
+     headroom so a whole carousel card fits without internal scrolling. */
+  #screen-lobby .lobby-dots, #screen-lobby .lobby-nav, #screen-lobby .lstep { flex: 1 1 100%; }
+  #screen-lobby .lstep > .card { flex: none; margin: 0 auto; max-width: 720px; width: 100%; }
+  #screen-lobby #hostSettings,
+  #screen-lobby .map-step-card,
+  #screen-lobby .party-card { max-height: calc(100vh - 150px); }
   #screen-lobby .card h2 { font-size: 16px; margin-bottom: 8px; }
   #screen-lobby .field { margin-bottom: 8px; }
   #screen-lobby input, #screen-lobby select { padding: 7px 10px; }

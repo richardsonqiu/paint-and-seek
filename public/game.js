@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=52';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=53';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -300,17 +300,43 @@ $('seekersInput').addEventListener('change', () => socket.emit('settings', { see
 $('botsInput').addEventListener('change', () => socket.emit('settings', { bots: +$('botsInput').value }));
 $('whistleSelect').addEventListener('change', () => socket.emit('settings', { whistle: $('whistleSelect').value }));
 
+// The lobby is a 3-step wizard for the host (1 Players → 2 Map → 3 Rules) so
+// each screen is ONE task; guests stay on the party screen and wait.
+let lobbyStep = 1;
+function setLobbyStep(n) {
+  lobbyStep = clamp(n, 1, 3);
+  if (snap && snap.phase === 'lobby') renderLobby();
+  SFX.click();
+}
+$('lobbyNextBtn').addEventListener('click', () => setLobbyStep(lobbyStep + 1));
+$('lobbyBackBtn').addEventListener('click', () => setLobbyStep(lobbyStep - 1));
+
 function renderLobby() {
   $('lobbyCode').textContent = snap.code;
   const isHost = snap.hostId === myId;
+  const step = isHost ? lobbyStep : 1;   // guests only ever see the party
   $('playerCount').textContent = `(${snap.players.length}/10)`;
   $('playerList').innerHTML = snap.players.map((p) => `
     <li><span class="pemoji">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span>
     ${p.isBot ? '<span class="tagbadge bot">BOT</span>' : ''}
     ${p.isHost ? '<span class="tagbadge host">HOST</span>' : ''}</li>`).join('');
-  $('hostSettings').classList.toggle('hidden', !isHost);
+
+  // Step panels + progress dots
+  $('lobbyStep1').classList.toggle('hidden', step !== 1);
+  $('lobbyStep2').classList.toggle('hidden', step !== 2);
+  $('lobbyStep3').classList.toggle('hidden', step !== 3);
+  $('lobbyDots').classList.toggle('hidden', !isHost);
+  for (const d of $('lobbyDots').children) {
+    d.classList.toggle('active', +d.dataset.step === step);
+    d.classList.toggle('done', +d.dataset.step < step);
+  }
   $('guestWait').classList.toggle('hidden', isHost);
-  $('startBtn').classList.toggle('hidden', !isHost);
+
+  // Navigation: hosts walk Next/Back; Start lives on the LAST step only.
+  $('lobbyBackBtn').classList.toggle('hidden', !isHost || step === 1);
+  $('lobbyNextBtn').classList.toggle('hidden', !isHost || step === 3);
+  $('lobbyNextBtn').textContent = step === 1 ? 'Choose map →' : 'Game rules →';
+  $('startBtn').classList.toggle('hidden', !isHost || step !== 3);
   $('startBtn').disabled = !(isHost && snap.players.length >= 1);
   $('lobbyHint').textContent = snap.players.length < 2 ? 'Best with friends — share the code! (You can solo-test too.)' : '';
   if (isHost) {
@@ -2283,6 +2309,12 @@ function applyIntroFly(target) {
 }
 
 function updateCamera() {
+  if (window.__cam) { // debug: free camera [x,y,z, lookX,lookY,lookZ] — authors the map photos
+    const c = window.__cam;
+    camera.up.set(0, 1, 0);
+    camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]);
+    return;
+  }
   if (window.__ov) { // debug: top-down overview (set window.__ov = height)
     camera.position.set(0.01, window.__ov, 0.01); camera.up.set(0, 0, -1); camera.lookAt(0, 0, 0); return;
   }
@@ -3250,6 +3282,7 @@ function renderGame() {
     lastPhaseKey = key;
     if (phase === 'prep') {
       window.__ov = 0;   // a leftover debug overview must never hijack a round
+      window.__cam = null;
       clearFootprints();               // last round's tracks vanish
       if (role === 'hider') {
         introUntil = performance.now() + 2200;   // swooping round-intro camera
@@ -3575,10 +3608,13 @@ setInterval(() => {
 // ---- Socket -------------------------------------------------------------
 socket.on('connect', () => { myId = socket.id; });
 socket.on('state', (s) => {
+  const wasLobby = snap && snap.phase === 'lobby' && snap.code === s.code;
   snap = s; myId = s.myId || myId; serverSkew = s.now - Date.now();
   if (!inRoom) return;
-  if (s.phase === 'lobby') { show('lobby'); renderLobby(); }
-  else { show('game'); renderGame(); }
+  if (s.phase === 'lobby') {
+    if (!wasLobby) lobbyStep = 1;   // fresh lobby (joined / back from a game) restarts the wizard
+    show('lobby'); renderLobby();
+  } else { show('game'); renderGame(); }
 });
 socket.on('tagged', ({ id, name, by }) => {
   toast(`🎯 ${by} caught ${name}!`);
