@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=49';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=51';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -1996,7 +1996,7 @@ function botTrait(id, salt) {
 function botTraits(id) {
   return {
     speed: 0.72 + botTrait(id, 'spd') * 0.33,       // 0.72–1.05× of the tuned pace
-    sight: 0.75 + botTrait(id, 'sight') * 0.55,     // short- vs eagle-eyed
+    sight: 0.9 + botTrait(id, 'sight') * 0.45,      // short- vs eagle-eyed (all functional)
     pauseChance: 0.25 + botTrait(id, 'pc') * 0.5,   // how often it stops to scan
     pauseMs: 700 + botTrait(id, 'pm') * 1600,       // how long the scan lasts
     reactMs: 150 + botTrait(id, 're') * 600,        // spotting → giving chase
@@ -2026,10 +2026,11 @@ function updateBotSeekers(dt) {
     // ---- Sense (every 150ms — LOS raycasts aren't free) ----
     if (now >= s.senseAt) {
       s.senseAt = now + 150;
-      const hadPrey = !!s.prey;
       s.prey = null;
       let pd = Infinity;
-      const SIGHT = 3.4 * cs * T.sight;
+      // Standing hiders in the open get spotted across a room, like a human
+      // seeker would. Posed hiders still halve this — hiding keeps paying.
+      const SIGHT = 6.0 * cs * T.sight;
       // Decoys are candidate prey too — bots get fooled just like humans
       // (the server pops the decoy and jams their gun when they shoot it).
       for (const h of [...snap.bodies, ...(snap.decoys || [])]) {
@@ -2039,9 +2040,11 @@ function updateBotSeekers(dt) {
         // Hiding pays: any non-standing pose halves the spot range.
         const sight = (h.pose && h.pose !== 'standing') ? SIGHT * 0.5 : SIGHT;
         if (d > sight || d >= pd) continue;
-        // Forward cone (~150°) — but skip it at arm's reach: a hider RIGHT
-        // NEXT to the bot gets noticed no matter which way it faces.
-        if (d > 1.2 * cs && (Math.sin(s.ry) * dx + Math.cos(s.ry) * dz) / (d || 1) < 0.25) continue;
+        // Forward cone (~150°) — but "hearing" overrides it up close: a
+        // hider within a couple of body lengths gets noticed no matter
+        // which way the bot faces (walking right past someone in the open
+        // and not reacting read as broken).
+        if (d > 2.6 * cs && (Math.sin(s.ry) * dx + Math.cos(s.ry) * dz) / (d || 1) < 0.25) continue;
         // True line of sight through the level.
         _ro.set(s.x, (s.y || 0) + 0.9 * cs, s.z);
         _rd.set(dx, ((h.y || 0) + 0.3 * cs) - ((s.y || 0) + 0.9 * cs), dz).normalize();
@@ -2049,14 +2052,29 @@ function updateBotSeekers(dt) {
         if (collisionMeshes.length && _rc.intersectObjects(collisionMeshes, true).length) continue;
         s.prey = { x: h.x, z: h.z }; pd = d;
       }
-      if (s.prey && !hadPrey) s.reactUntil = now + T.reactMs;   // "…wait, was that—?"
-      if (s.prey && now < s.reactUntil) s.prey = null;          // still processing
+      // Reaction time, measured from the FIRST glimpse. (The old gate nulled
+      // prey while reacting, so the next tick saw "new" prey and restarted
+      // the timer — bots with slow reaction rolls could never lock a target
+      // at all, standing inside hiders without firing.)
+      if (s.prey) {
+        if (!s.spottedAt) s.spottedAt = now;                    // "…wait, was that—?"
+        if (now - s.spottedAt < T.reactMs) s.prey = null;       // still processing
+      } else s.spottedAt = 0;
       if (s.prey) { s.mode = 'chase'; s.lastSeen = { ...s.prey }; s.idleUntil = 0; }
       else if (s.mode === 'chase') { s.mode = 'investigate'; s.target = s.lastSeen; }
-      // Point-blank + reloaded → fire (server re-validates the reload).
-      if (s.prey && pd < 1.25 && now - s.shotAt >= 3050) {
+      // In range + reloaded → fire, like a human would from across the room
+      // (the old point-blank-only rule made bots stand IN a hider and never
+      // shoot). Aim scatter grows with distance so long shots can miss —
+      // the 1.4m blast radius forgives small error, big error whiffs.
+      if (s.prey && pd < 4.2 * cs && now - s.shotAt >= reloadMsNow() + 50) {
         s.shotAt = now;
-        socket.emit('botshoot', { id: bb.id, x: s.prey.x, z: s.prey.z });
+        const err = (0.1 + pd * 0.14) * (0.4 + Math.random() * 0.6);
+        const ea = Math.random() * Math.PI * 2;
+        socket.emit('botshoot', {
+          id: bb.id,
+          x: s.prey.x + Math.cos(ea) * err,
+          z: s.prey.z + Math.sin(ea) * err,
+        });
       }
     }
     // ---- Idle scan: some bots stop and look around between rooms, which is
@@ -3640,6 +3658,17 @@ window.__snapimg = (q = 0.85) => {
   renderer.render(scene, camera);
   return renderer.domElement.toDataURL('image/jpeg', q);
 };
+window.__botDbg = () => ({
+  hosting: !!(snap && snap.phase === 'hunt' && snap.hostId === myId),
+  hostId: snap && snap.hostId, myId,
+  seekerBodies: (snap && snap.bodies || []).filter((b) => b.seeker).map((b) => ({ id: b.id, bot: !!b.bot })),
+  sim: [...botSim.entries()].map(([id, s]) => ({
+    id, x: +s.x.toFixed(1), z: +s.z.toFixed(1), mode: s.mode,
+    idleLeft: Math.max(0, (s.idleUntil || 0) - Date.now()),
+    tgt: s.target && { x: +s.target.x.toFixed(1), z: +s.target.z.toFixed(1) },
+    prey: !!s.prey,
+  })),
+});
 window.__state = () => ({
   body: myBody && { x: +myBody.x.toFixed(2), y: +(myBody.y || 0).toFixed(2), z: +myBody.z.toFixed(2), pose: myBody.pose },
   climbing, joy: joyVec, near: nearSurface,
