@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=53';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=54';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -248,36 +248,41 @@ function mapSizeLabel(m) {
   const rel = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / (m.charScale || 1);
   return rel < 15 ? 'Small' : rel < 22 ? 'Medium' : rel < 28 ? 'Large' : 'Huge';
 }
-function buildMapPicker() {
-  const el = $('mapPicker'); if (el.childElementCount) return;
-  const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
-  Object.values(MAPS).forEach((m) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'map-card'; b.dataset.map = m.id;
-    b.innerHTML = `
-      <img src="/img/maps/${m.id}.jpg" alt="${m.name}" loading="lazy"
-           onerror="this.style.display='none'">
-      <div class="mc-name">${m.name}</div>
-      <div class="mc-meta">
-        <span class="mc-badge d${m.difficulty || 2}">${DIFF[m.difficulty] || 'Medium'}</span>
-        <span class="mc-badge size">${mapSizeLabel(m)}</span>
-      </div>
-      <div class="mc-blurb">${m.blurb || ''}</div>`;
-    b.addEventListener('click', () => { socket.emit('settings', { map: m.id }); SFX.click(); });
-    el.appendChild(b);
-  });
+// Coverflow map picker: exactly THREE cards — the big CENTRE card IS the
+// chosen map, the smaller sides are the previous/next maps. It loops, so the
+// first map shows the last one on its left. Tapping a side card rotates it
+// into the centre (which selects it).
+const DIFF_NAMES = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
+function mapCardInner(m, full) {
+  return `
+    <img src="/img/maps/${m.id}.jpg" alt="${m.name}" loading="lazy"
+         onerror="this.style.display='none'">
+    <div class="mc-name">${m.name}</div>
+    <div class="mc-meta">
+      <span class="mc-badge d${m.difficulty || 2}">${DIFF_NAMES[m.difficulty] || 'Medium'}</span>
+      <span class="mc-badge size">${mapSizeLabel(m)}</span>
+    </div>
+    ${full ? `<div class="mc-blurb">${m.blurb || ''}</div>` : ''}`;
 }
 let _pickerSel = null;
 function syncMapPicker(mapId) {
-  for (const c of $('mapPicker').children) c.classList.toggle('selected', c.dataset.map === mapId);
-  // Glide the carousel to the selected card — once per selection change, so
-  // it never fights the host's own swiping.
-  if (_pickerSel !== mapId) {
-    _pickerSel = mapId;
-    const el = [...$('mapPicker').children].find((c) => c.dataset.map === mapId);
-    if (el) el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  if (_pickerSel === mapId && $('mapPicker').childElementCount) return;
+  _pickerSel = mapId;
+  const ids = Object.keys(MAPS);
+  const i = Math.max(0, ids.indexOf(mapId));
+  const prev = MAPS[ids[(i - 1 + ids.length) % ids.length]];
+  const cur = MAPS[ids[i]];
+  const next = MAPS[ids[(i + 1) % ids.length]];
+  const el = $('mapPicker');
+  el.innerHTML = `
+    <button type="button" class="map-card car-side" data-map="${prev.id}" title="${prev.name}">${mapCardInner(prev, false)}</button>
+    <div class="map-card car-center selected">${mapCardInner(cur, true)}</div>
+    <button type="button" class="map-card car-side" data-map="${next.id}" title="${next.name}">${mapCardInner(next, false)}</button>`;
+  for (const b of el.querySelectorAll('.car-side')) {
+    b.addEventListener('click', () => { socket.emit('settings', { map: b.dataset.map }); SFX.click(); });
   }
 }
+function buildMapPicker() { /* rendered by syncMapPicker */ }
 $('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));
 $('modifierSelect').addEventListener('change', () => socket.emit('settings', { modifier: $('modifierSelect').value }));
 

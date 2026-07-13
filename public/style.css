@@ -338,23 +338,31 @@ input[type="range"] {
 #startConfirm { position: fixed; z-index: 60; }
 .confirm-list { margin-top: 10px; max-height: 30vh; overflow-y: auto; text-align: left; }
 
-/* ---- Map picker: a swipeable snapshot CAROUSEL --------------------------
-   One big card at a time (phone thumbs swipe through), scroll-snap keeps a
-   card centred, and the selected card carries a green ring + check. */
+/* ---- Map picker: 3-card COVERFLOW ----------------------------------------
+   Prev | CHOSEN | Next. The big centre card is the selection; tapping a
+   smaller side card rotates it into the centre. Loops around the map list. */
 .map-picker {
-  display: flex; gap: 12px; width: 100%;
-  overflow-x: auto; padding: 4px 2px 10px;
-  scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
+  display: flex; gap: 10px; width: 100%;
+  align-items: center; justify-content: center;
+  padding: 4px 0 8px;
 }
 .map-card {
-  flex: 0 0 min(260px, 82%); scroll-snap-align: center;
   position: relative; border: 3px solid rgba(58, 44, 26, .35); border-radius: 14px;
   overflow: hidden; padding: 0; background: #fffdf3; cursor: pointer;
   text-align: left; box-shadow: 0 3px 0 rgba(58, 44, 26, .25);
-  transition: transform .08s ease;
+  transition: transform .12s ease, opacity .12s ease;
 }
-.map-card:active { transform: scale(.97); }
+.map-card.car-center {
+  flex: 0 0 min(300px, 54%); cursor: default; z-index: 1;
+}
+.map-card.car-side {
+  flex: 0 0 min(170px, 22%); opacity: .6; transform: scale(.9);
+}
+.map-card.car-side:hover { opacity: .85; transform: scale(.94); }
+.map-card.car-side:active { transform: scale(.86); }
+.map-card.car-side .mc-name { font-size: 11.5px; padding: 4px 6px 0; }
+.map-card.car-side .mc-meta { padding: 3px 6px 6px; }
+.map-card.car-side .mc-badge { font-size: 9px; padding: 1px 6px; }
 .map-card.selected { border-color: #2e9b48; box-shadow: 0 0 0 3px rgba(46, 155, 72, .35), 0 3px 0 rgba(58, 44, 26, .25); }
 .map-card.selected::after {
   content: '✔'; position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
@@ -376,7 +384,8 @@ input[type="range"] {
 /* Short phone screens: compact cards so one fits WHOLE inside the settings
    card with no vertical clipping — the blurb goes, the snapshot stays. */
 @media (max-height: 560px) {
-  .map-card { flex-basis: 200px; }
+  .map-card.car-center { flex-basis: min(236px, 46%); }
+  .map-card.car-side { flex-basis: min(128px, 20%); }
   .map-card .mc-blurb { display: none; }
   .map-card .mc-name { font-size: 13px; padding-top: 4px; }
   /* Slim the map step's chrome so name + badges stay visible under the card */
