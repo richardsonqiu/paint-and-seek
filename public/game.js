@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=56';
+import { MAPS, POSES, DEFAULT_MAP_ID, KIT_SCALE, spawnPoints, MODIFIERS, dailyFeatured } from '/shared/maps.js?v=57';
 
 // Accelerate raycasts (collision/floor/climb) with a BVH — the per-frame
 // raycasts against high-poly building meshes were the main FPS killer.
@@ -248,50 +248,150 @@ function mapSizeLabel(m) {
   const rel = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / (m.charScale || 1);
   return rel < 15 ? 'Small' : rel < 22 ? 'Medium' : rel < 28 ? 'Large' : 'Huge';
 }
-// Coverflow map picker: exactly THREE cards — the big CENTRE card IS the
-// chosen map, the smaller sides are the previous/next maps. It loops, so the
-// first map shows the last one on its left. Tapping a side card rotates it
-// into the centre (which selects it).
+// Swipe-and-glide map picker: a looping strip of map cards you FLICK — the
+// throw carries momentum, loses energy to friction, then eases onto the
+// nearest card. Whatever settles in the CENTRE is the chosen map. The strip
+// holds three copies of the map list and silently re-centres onto the middle
+// copy, so you can spin forever in either direction.
 const DIFF_NAMES = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
-function mapCardInner(m, full) {
+function mapCardInner(m) {
   return `
-    <img src="/img/maps/${m.id}.jpg" alt="${m.name}" loading="lazy"
+    <img src="/img/maps/${m.id}.jpg" alt="${m.name}" loading="lazy" draggable="false"
          onerror="this.style.display='none'">
     <div class="mc-name">${m.name}</div>
     <div class="mc-meta">
       <span class="mc-badge d${m.difficulty || 2}">${DIFF_NAMES[m.difficulty] || 'Medium'}</span>
       <span class="mc-badge size">${mapSizeLabel(m)}</span>
-    </div>
-    ${full ? `<div class="mc-blurb">${m.blurb || ''}</div>` : ''}`;
+    </div>`;
 }
+const CAR = { pos: 0, vel: 0, dragging: false, raf: 0, snapTo: null, lastX: 0, lastT: 0, moved: 0, built: false };
+const carIds = () => Object.keys(MAPS);
 let _pickerSel = null;
-function syncMapPicker(mapId) {
-  if (_pickerSel === mapId && $('mapPicker').childElementCount) return;
-  const ids = Object.keys(MAPS);
-  const oldI = ids.indexOf(_pickerSel);
-  _pickerSel = mapId;
-  const i = Math.max(0, ids.indexOf(mapId));
-  const prev = MAPS[ids[(i - 1 + ids.length) % ids.length]];
-  const cur = MAPS[ids[i]];
-  const next = MAPS[ids[(i + 1) % ids.length]];
+
+function carSpan() {
+  const strip = $('mapStrip');
+  const c = strip && strip.firstElementChild;
+  if (!c || !c.offsetWidth) return 240;
+  return c.offsetWidth + (parseFloat(getComputedStyle(strip).gap) || 12);
+}
+
+function ensureCarousel() {
+  if (CAR.built) return;
   const el = $('mapPicker');
-  el.innerHTML = `
-    <button type="button" class="map-card car-side" data-map="${prev.id}" title="${prev.name}">${mapCardInner(prev, false)}</button>
-    <div class="map-card car-center selected">${mapCardInner(cur, true)}</div>
-    <button type="button" class="map-card car-side" data-map="${next.id}" title="${next.name}">${mapCardInner(next, false)}</button>`;
-  for (const b of el.querySelectorAll('.car-side')) {
-    b.addEventListener('click', () => { socket.emit('settings', { map: b.dataset.map }); SFX.click(); });
+  const ids = carIds();
+  const strip = document.createElement('div');
+  strip.id = 'mapStrip'; strip.className = 'map-strip';
+  for (let r = 0; r < 3; r++) {
+    ids.forEach((id, j) => {
+      const c = document.createElement('div');
+      c.className = 'map-card';
+      c.dataset.map = id;
+      c.dataset.k = r * ids.length + j;
+      c.innerHTML = mapCardInner(MAPS[id]);
+      strip.appendChild(c);
+    });
   }
-  // Rotation animation: the new trio slides in from the side it came from
-  // (the shortest way around the loop picks the direction).
-  if (oldI >= 0 && oldI !== i) {
-    const n = ids.length;
-    const fwd = (i - oldI + n) % n;             // steps if we rotated "right"
-    const cls = fwd <= n - fwd ? 'anim-r' : 'anim-l';
-    el.classList.remove('anim-l', 'anim-r');
-    void el.offsetWidth;                        // restart the CSS animation
-    el.classList.add(cls);
+  el.innerHTML = '';
+  el.appendChild(strip);
+  CAR.pos = ids.length;            // middle copy, first map
+  CAR.built = true;
+
+  el.addEventListener('pointerdown', (e) => {
+    CAR.dragging = true; CAR.vel = 0; CAR.moved = 0; CAR.snapTo = null;
+    CAR.lastX = e.clientX; CAR.lastT = performance.now();
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    carRun();
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!CAR.dragging) return;
+    const span = carSpan();
+    const dx = e.clientX - CAR.lastX;
+    const now = performance.now();
+    const dt = Math.max(1, now - CAR.lastT);
+    CAR.pos -= dx / span;                                     // finger drags the strip
+    CAR.vel = CAR.vel * 0.7 + (-(dx / span) / dt * 16) * 0.3; // per-frame velocity, smoothed
+    CAR.moved += Math.abs(dx);
+    CAR.lastX = e.clientX; CAR.lastT = now;
+  });
+  const release = (e) => {
+    if (!CAR.dragging) return;
+    CAR.dragging = false;
+    if (CAR.moved < 8) {           // a TAP: glide to the tapped card instead
+      const card = e.target && e.target.closest && e.target.closest('.map-card');
+      if (card) { CAR.snapTo = +card.dataset.k; CAR.vel = 0; }
+    }
+    carRun();
+  };
+  el.addEventListener('pointerup', release);
+  el.addEventListener('pointercancel', release);
+  window.addEventListener('resize', () => { if (CAR.built) carRender(); });
+}
+
+function carRun() {
+  if (CAR.raf) return;
+  const step = () => {
+    const n = carIds().length;
+    let done = false;
+    if (!CAR.dragging) {
+      if (CAR.snapTo == null && Math.abs(CAR.vel) > 0.0035) {
+        CAR.vel *= 0.94;                       // friction — the throw loses energy
+        CAR.pos += CAR.vel;
+      } else {
+        const target = CAR.snapTo != null ? CAR.snapTo : Math.round(CAR.pos);
+        CAR.pos += (target - CAR.pos) * 0.2;   // ease onto the nearest card
+        if (Math.abs(target - CAR.pos) < 0.004) {
+          CAR.pos = target; CAR.snapTo = null; done = true;
+        }
+      }
+    }
+    // Stay on the middle copy of the tripled list — infinite spin both ways.
+    if (CAR.pos < n * 0.5) { CAR.pos += n; if (CAR.snapTo != null) CAR.snapTo += n; }
+    else if (CAR.pos >= n * 2.5) { CAR.pos -= n; if (CAR.snapTo != null) CAR.snapTo -= n; }
+    carRender();
+    if (done) { CAR.raf = 0; carSettled(); return; }
+    CAR.raf = requestAnimationFrame(step);
+  };
+  CAR.raf = requestAnimationFrame(step);
+}
+
+function carRender() {
+  const el = $('mapPicker'), strip = $('mapStrip');
+  if (!strip || !el.clientWidth) return;
+  const span = carSpan();
+  const gap = parseFloat(getComputedStyle(strip).gap) || 12;
+  const cardW = span - gap;
+  strip.style.transform = `translateX(${el.clientWidth / 2 - (CAR.pos * span + cardW / 2)}px)`;
+  const centreK = Math.round(CAR.pos);
+  for (const c of strip.children) {
+    const d = Math.abs(+c.dataset.k - CAR.pos);
+    if (d > 2.5) { c.style.visibility = 'hidden'; continue; }
+    c.style.visibility = '';
+    c.style.transform = `scale(${Math.max(0.78, 1 - 0.16 * d)})`;
+    c.style.opacity = String(Math.max(0.55, 1 - 0.3 * Math.min(1.5, d)));
+    c.classList.toggle('selected', +c.dataset.k === centreK);
   }
+}
+
+// The strip came to rest — whatever is centred becomes the chosen map.
+function carSettled() {
+  const ids = carIds(), n = ids.length;
+  const id = ids[((Math.round(CAR.pos) % n) + n) % n];
+  _pickerSel = id;
+  if (snap && snap.phase === 'lobby' && snap.hostId === myId && snap.settings.map !== id) {
+    socket.emit('settings', { map: id });
+    SFX.click();
+  }
+}
+
+function syncMapPicker(mapId) {
+  ensureCarousel();
+  if (CAR.dragging || CAR.raf) return;   // never fight an active swipe
+  const ids = carIds(), n = ids.length;
+  const want = ids.indexOf(mapId);
+  const cur = ((Math.round(CAR.pos) % n) + n) % n;
+  if (want >= 0 && want !== cur) CAR.pos = n + want;
+  _pickerSel = mapId;
+  carRender();
 }
 function buildMapPicker() { /* rendered by syncMapPicker */ }
 $('modeSelect').addEventListener('change', () => socket.emit('settings', { mode: $('modeSelect').value }));

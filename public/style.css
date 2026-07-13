@@ -338,36 +338,24 @@ input[type="range"] {
 #startConfirm { position: fixed; z-index: 60; }
 .confirm-list { margin-top: 10px; max-height: 30vh; overflow-y: auto; text-align: left; }
 
-/* ---- Map picker: 3-card COVERFLOW ----------------------------------------
-   Prev | CHOSEN | Next. The big centre card is the selection; tapping a
-   smaller side card rotates it into the centre. Loops around the map list. */
+/* ---- Map picker: swipe-and-glide strip ------------------------------------
+   A looping strip of cards you flick; momentum decays and the strip settles
+   with one card centred — that card is the chosen map. Cards shrink and dim
+   with distance from the centre (transform/opacity set per frame by JS). */
 .map-picker {
-  display: flex; gap: 10px; width: 100%;
-  align-items: center; justify-content: center;
-  padding: 4px 0 8px;
+  position: relative; overflow: hidden; width: 100%;
+  padding: 6px 0 10px; touch-action: pan-y;
+  cursor: grab; user-select: none; -webkit-user-select: none;
 }
+.map-picker:active { cursor: grabbing; }
+.map-strip { display: flex; gap: 12px; align-items: center; will-change: transform; }
+.map-strip .map-card { flex: 0 0 min(300px, 48%); }
 .map-card {
   position: relative; border: 3px solid rgba(58, 44, 26, .35); border-radius: 14px;
-  overflow: hidden; padding: 0; background: #fffdf3; cursor: pointer;
+  overflow: hidden; padding: 0; background: #fffdf3; cursor: grab;
   text-align: left; box-shadow: 0 3px 0 rgba(58, 44, 26, .25);
-  transition: transform .12s ease, opacity .12s ease;
 }
-.map-card.car-center {
-  flex: 0 0 min(300px, 54%); cursor: default; z-index: 1;
-}
-.map-card.car-side {
-  flex: 0 0 min(170px, 22%); opacity: .6; transform: scale(.9);
-}
-.map-card.car-side:hover { opacity: .85; transform: scale(.94); }
-.map-card.car-side:active { transform: scale(.86); }
-.map-card.car-side .mc-name { font-size: 11.5px; padding: 4px 6px 0; }
-.map-card.car-side .mc-meta { padding: 3px 6px 6px; }
-.map-card.car-side .mc-badge { font-size: 9px; padding: 1px 6px; }
-/* Rotation: the fresh trio slides in from the side the new map came from */
-.map-picker.anim-r { animation: carSpinR .26s ease; }
-.map-picker.anim-l { animation: carSpinL .26s ease; }
-@keyframes carSpinR { from { transform: translateX(56px); opacity: .35; } to { transform: none; opacity: 1; } }
-@keyframes carSpinL { from { transform: translateX(-56px); opacity: .35; } to { transform: none; opacity: 1; } }
+.map-card img { pointer-events: none; -webkit-user-drag: none; }
 .map-card.selected { border-color: #2e9b48; box-shadow: 0 0 0 3px rgba(46, 155, 72, .35), 0 3px 0 rgba(58, 44, 26, .25); }
 .map-card.selected::after {
   content: '✔'; position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
@@ -389,8 +377,7 @@ input[type="range"] {
 /* Short phone screens: compact cards so one fits WHOLE inside the settings
    card with no vertical clipping — the blurb goes, the snapshot stays. */
 @media (max-height: 560px) {
-  .map-card.car-center { flex-basis: min(236px, 46%); }
-  .map-card.car-side { flex-basis: min(128px, 20%); }
+  .map-strip .map-card { flex-basis: min(236px, 42%); }
   .map-card .mc-blurb { display: none; }
   .map-card .mc-name { font-size: 13px; padding-top: 4px; }
   /* Slim the map step's chrome so the photos get all the height —
@@ -775,13 +762,11 @@ body.paint-mode .whistle-meter { display: none !important; }
   #screen-lobby .player-list .tagbadge { font-size: clamp(8px, 1.8vh, 11px); padding: 2px 7px; }
   /* Map step: the centre card also bounds itself by HEIGHT (image is 16:9),
      so the coverflow trio always fits between banner and nav. */
-  #screen-lobby .map-card.car-center { flex-basis: min(340px, 48%); }
-  #screen-lobby .map-card.car-side { flex-basis: min(190px, 24%); }
-  /* Bound the photos by HEIGHT (object-fit crops the width) so the trio
+  #screen-lobby .map-strip .map-card { flex-basis: min(340px, 46%); }
+  /* Bound the photos by HEIGHT (object-fit crops the width) so the strip
      always fits the step no matter the aspect of the screen. */
-  #screen-lobby .map-card img { aspect-ratio: auto; object-fit: cover; }
-  #screen-lobby .car-center img { height: clamp(92px, calc(100dvh - 252px), 200px); }
-  #screen-lobby .car-side img { height: clamp(62px, calc(100dvh - 290px), 142px); }
+  #screen-lobby .map-card img { aspect-ratio: auto; object-fit: cover;
+    height: clamp(92px, calc(100dvh - 252px), 200px); }
   /* Rules: two columns side by side — selects left, numbers right */
   #screen-lobby .rules-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; align-items: start; }
   #screen-lobby .rules-note { font-size: clamp(9px, 1.9vh, 11px); margin-top: 2px; }
